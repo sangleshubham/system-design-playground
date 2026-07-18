@@ -1,0 +1,56 @@
+@switch (status()) {
+  @case ('loading') {
+    <div class="state-screen"><p>Loading design…</p></div>
+  }
+  @case ('notfound') {
+    <div class="state-screen">
+      <h2>Design not found</h2>
+      <p>We couldn't find that sandbox design.</p>
+      <a class="btn" routerLink="/sandbox">← Back to Sandbox</a>
+    </div>
+  }
+  @case ('error') {
+    <div class="state-screen">
+      <h2>Something went wrong</h2>
+      <p>The design failed to load. Please try again.</p>
+      <a class="btn" routerLink="/sandbox">← Back to Sandbox</a>
+    </div>
+  }
+  @case ('ready') {
+    <div class="sandbox">
+      <header class="sb-topbar">
+        <a class="back" routerLink="/sandbox"><app-icon name="back" /> Back to Sandbox</a>
+        <div class="title">
+          @if (editingName()) {
+            <input
+              #nameEdit
+              class="name-input"
+              [value]="name()"
+              (blur)="commitName(nameEdit.value)"
+              (keydown.enter)="commitName(nameEdit.value)"
+              (keydown.escape)="editingName.set(false)"
+            />
+          } @else {
+            <button type="button" class="name" (click)="startEditName()" title="Rename design">
+              {{ name() }}
+            </button>
+          }
+        </div>
+        @if (saveStatus() !== 'idle') {
+          <span class="save-indicator" [class.is-saving]="saveStatus() === 'saving'">
+            {{ saveStatus() === 'saving' ? 'Saving…' : 'Saved ✓' }}
+          </span>
+        }
+      </header>
+
+      <div class="sb-body">
+        <aside class="sb-palette"><app-palette /></aside>
+        <section class="sb-canvas-area" #canvasArea>
+          <app-cost-indicator class="cost-overlay" />
+          <app-canvas #canvas />
+          <app-canvas-controls [canvas]="canvas" [fullscreenTarget]="canvasArea" />
+        </section>
+      </div>
+    </div>
+  }
+}

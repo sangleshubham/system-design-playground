@@ -1,0 +1,84 @@
+{
+  "id": "level-9",
+  "actId": "act-2",
+  "order": 9,
+  "title": "News Feed",
+  "difficulty": "hard",
+  "summary": "Assemble a social home feed at scale by choosing between fan-out-on-write and fan-out-on-read.",
+  "narrative": "A news feed is a fan-out problem in disguise. When someone posts, that post has to surface in the home timeline of every one of their followers. There are two ways to make that happen. Fan-out-on-read assembles a timeline at read time by pulling recent posts from everyone you follow — cheap writes, but expensive, fan-heavy reads. Fan-out-on-write does the opposite: the moment a post is created, it's pushed into each follower's precomputed timeline, so reads are a single cache lookup.\n\nReads dominate a feed by orders of magnitude, so fan-out-on-write usually wins — but the write cost is brutal for popular accounts. A user with millions of followers would trigger millions of timeline inserts, and you cannot make the poster wait for that. So do it asynchronously: the web tier stores the post, drops a fan-out job on a queue, and returns immediately. A pool of workers drains the queue, reads the follow graph to find who should receive the post, and writes each follower's timeline into the cache.\n\nThat shapes the whole design. Posts live in a NoSQL store, the follow relationships live in a graph database built for traversing edges, precomputed timelines live in a cache, and workers behind a queue absorb the fan-out. A read then just pulls the ready-made timeline from cache. Build the write pipeline, the graph lookups, and the cache-fast read path.",
+  "objectives": ["Fan-out on write vs read", "Async feed generation", "Timeline caching", "Storing the social graph"],
+  "specs": {
+    "functional": [
+      "Publish a post into its author's followers' feeds",
+      "Assemble and serve each user's home timeline",
+      "Store the follow graph and look up a user's followers",
+      "Precompute timelines asynchronously with workers"
+    ],
+    "nonFunctional": [
+      "Feed reads served from cache under 200 ms at p99",
+      "Fan-out work never blocks the posting request",
+      "Survive the loss of any single web server"
+    ],
+    "constraints": [
+      "Clients enter through the load balancer only",
+      "The post store is reachable only from the app tier"
+    ],
+    "budgetPerHr": 8.0,
+    "latencyTargetMs": 300,
+    "capacity": ["~10,000 posts/sec and ~100,000 feed reads/sec", "Hundreds of millions of follow edges"],
+    "tradeoff": "Fan-out-on-write trades expensive, asynchronous writes for cheap, cache-fast reads — the mirror image of fan-out-on-read.",
+    "bonus": "Add a CDN to serve post media and static assets from close to each user."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route users through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance across the Web Server tier" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Store posts in the NoSQL datastore" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Enqueue a fan-out job on each new post" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let Workers pull fan-out jobs" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "graph-database", "label": "Look up a poster's followers in the Graph Database" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "cache", "label": "Write each follower's timeline into the Cache" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Serve the home timeline from the Cache" },
+    { "id": "m10", "kind": "add", "componentId": "cdn", "label": "Add a CDN for media", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Traffic must enter through the Load Balancer, not straight to a Web Server."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients must never reach the post store directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Post-store access must go through the application tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so a feed read or a post never depends on a single instance."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "worker",
+      "companionComponentId": "message-queue",
+      "message": "Fan-out Workers must pull their jobs from the durable Message Queue."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "worker", "cache", "nosql-database", "graph-database", "cdn"],
+  "hints": [
+    "Reads must be cheap: Client → Load Balancer → Web Server → Cache serves a precomputed timeline. Run at least two Web Servers.",
+    "On a new post the Web Server drops a fan-out job on the Message Queue; Workers pull the job, read followers from the Graph Database, and write each timeline into the Cache.",
+    "Keep posts in the NoSQL store and the follow relationships in the Graph Database, and add a CDN to offload post media."
+  ]
+}

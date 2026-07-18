@@ -1,0 +1,144 @@
+:host {
+  display: block;
+  position: relative;
+  user-select: none;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 170px;
+  padding: 10px 12px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-soft);
+  cursor: grab;
+  transition:
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+.card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-elevated);
+}
+.card:active {
+  cursor: grabbing;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 0;
+  font-size: 34px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+.name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tech {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rename {
+  width: 100%;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 1px 4px;
+  border: 1px solid var(--color-primary);
+  border-radius: 4px;
+  background: var(--surface-0);
+  color: var(--text-primary);
+}
+
+.note-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 4px;
+}
+.note-btn.has-note {
+  color: var(--color-warning);
+}
+.note-btn:hover {
+  background: var(--surface-2);
+}
+
+.note-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  z-index: 5;
+  width: 200px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-elevated);
+  padding: 6px;
+}
+.note-popover textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  font: inherit;
+  font-size: 0.8rem;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+// Doubled class selectors: the @foblex default theme styles sockets as
+// `f-flow .f-node-input:not(.f-node)` (0,2,1), which outweighs a single
+// scoped class — these need (0,3,0)+ to own size/border/radius/background.
+// The theme's node-frame reset lives in styles.scss.
+.conn.conn-in,
+.conn.conn-out {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface-0);
+  border: 2px solid var(--color-primary);
+  transform: translateY(-50%);
+  cursor: crosshair;
+  z-index: 2;
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease;
+}
+.conn.conn-in {
+  left: -7px;
+}
+.conn.conn-out {
+  right: -7px;
+}
+.conn.conn-in:hover,
+.conn.conn-out:hover {
+  background: var(--color-primary);
+  transform: translateY(-50%) scale(1.25);
+}

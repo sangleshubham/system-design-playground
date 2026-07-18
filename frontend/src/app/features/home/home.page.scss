@@ -1,0 +1,110 @@
+.home {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+
+.hero {
+  margin-bottom: 32px;
+}
+.hero h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  margin: 0 0 8px;
+}
+.tagline {
+  color: var(--text-secondary);
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.card {
+  padding: 20px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+/* Lab card spans the full width on wide layouts to headline progress. */
+.lab-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lab-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.lab-head h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+.count {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.percent {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.action-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-decoration: none;
+  color: inherit;
+  min-height: 120px;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.action-card:hover {
+  box-shadow: var(--shadow-elevated);
+  transform: translateY(-2px);
+}
+.action-card h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+.action-card .meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.action-card .cta {
+  margin-top: auto;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.btn {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 9px 18px;
+  border-radius: var(--radius-control);
+  text-decoration: none;
+  font-weight: 700;
+}
+.btn.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+}
+.btn.primary:hover {
+  background: var(--color-primary-hover);
+}

@@ -1,0 +1,21 @@
+# Backend-specific ignores
+
+# SQLite database files
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Build output
+dist/
+
+# TypeScript incremental compilation
+*.tsbuildinfo
+
+# Runtime / temp
+tmp/
+temp/
+uploads/
+
+# Test coverage
+coverage/

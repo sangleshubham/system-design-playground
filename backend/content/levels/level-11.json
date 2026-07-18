@@ -1,0 +1,82 @@
+{
+  "id": "level-11",
+  "actId": "act-2",
+  "order": 11,
+  "title": "Web Crawler",
+  "difficulty": "expert",
+  "summary": "Crawl the web with a distributed, polite fleet of fetchers coordinated through a URL frontier.",
+  "narrative": "A web crawler is a deceptively simple loop wrapped around a brutal scaling problem. Start with a handful of seed URLs, fetch each page, pull the links out of it, and repeat — forever, across billions of pages, without ever fetching the same URL twice or hammering any single site into the ground.\n\nThe heart of the design is the frontier: a message queue holding the URLs still to be visited. An operator seeds it through a coordinator, and a fleet of stateless worker fetchers pulls URLs off the queue, downloads each page, and pushes the newly discovered links back onto the frontier. Add more workers and you crawl faster; that is the whole point of decoupling the queue from the fetchers.\n\nTwo things keep the loop honest. Before fetching, every worker checks a Bloom filter of URLs already seen — a probabilistic set that answers \"have we crawled this?\" in constant space across tens of billions of URLs. And every page has two homes: the raw bytes land in blob storage, while the processed, searchable content is written to a search index. Wire the loop, and the crawl runs itself.",
+  "objectives": ["URL frontier queue", "Worker fetcher fleet", "Bloom-filter dedup", "Raw and indexed storage"],
+  "specs": {
+    "functional": [
+      "Fetch pages starting from a set of seed URLs",
+      "Discover and enqueue new links found on each page",
+      "Skip URLs that have already been crawled",
+      "Store raw pages and index their processed content"
+    ],
+    "nonFunctional": [
+      "Never crawl the same URL twice",
+      "Scale throughput by adding more fetchers",
+      "Stay polite so no single host is overwhelmed"
+    ],
+    "constraints": [
+      "Seed URLs enter the frontier only through the coordinator",
+      "Only workers fetch pages and write to storage"
+    ],
+    "budgetPerHr": 6.0,
+    "latencyTargetMs": 250,
+    "capacity": ["~10,000 pages fetched/sec across the fleet", "Tens of billions of unique URLs tracked"],
+    "tradeoff": "A Bloom filter trades a tiny false-positive rate for constant-time dedup across billions of URLs, avoiding a giant exact set.",
+    "bonus": "Add Monitoring & Alerting to track fetch rate, frontier queue depth, and per-host politeness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "web-server", "label": "Seed and control the crawl through the Coordinator" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Fill the URL frontier from the Coordinator" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let the fetcher fleet pull URLs off the frontier" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "worker", "toComponentId": "bloom-filter", "label": "Skip URLs already seen via the Bloom Filter" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Store raw fetched pages in Blob Storage" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Index the processed page content" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "message-queue", "label": "Enqueue newly discovered links back onto the frontier" },
+    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "worker",
+      "message": "Operators steer the crawl through the Coordinator, never the fetcher fleet directly."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "message-queue",
+      "message": "Seed URLs must enter the frontier through the Coordinator, not be injected straight into the queue."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "worker",
+      "fromComponentId": "message-queue",
+      "toComponentId": "blob-storage",
+      "message": "A page only reaches storage after a Worker has fetched it from the frontier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run a fleet of at least two fetchers; a crawler with one worker barely crawls."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "worker",
+      "companionComponentId": "bloom-filter",
+      "message": "Every fetcher must consult the Bloom Filter, or the crawl loops on URLs it has already seen."
+    }
+  ],
+  "recommendedComponentIds": ["client", "web-server", "message-queue", "worker", "bloom-filter", "blob-storage", "search-index", "monitoring"],
+  "hints": [
+    "Model the crawl as a loop: the Client seeds the Coordinator (Web Server), which fills the Message Queue frontier; Workers pull URLs, fetch pages, and push new links back onto the queue.",
+    "Before fetching, every Worker must check the Bloom Filter so the crawl doesn't re-download URLs it has already seen.",
+    "Store the raw pages in Blob Storage and the processed, searchable content in the Search Index -- and run a fleet of at least two Workers."
+  ]
+}

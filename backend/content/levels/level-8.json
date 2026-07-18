@@ -1,0 +1,82 @@
+{
+  "id": "level-8",
+  "actId": "act-2",
+  "order": 8,
+  "title": "Real-Time Chat System",
+  "difficulty": "hard",
+  "summary": "Deliver messages the instant they're sent, with presence and durable history, across a fleet of servers.",
+  "narrative": "Chat is fundamentally bidirectional. The server can't wait for a client to poll — the moment a message arrives it has to be pushed to the recipient. That rules out plain request/response and calls for persistent connections: WebSockets that stay open so either side can send at any time.\n\nThe hard part is that a million users don't all land on the same server. When Alice, connected to server A, messages Bob, connected to server B, server A has to get that message across to server B. A Pub/Sub layer solves this: each server subscribes to the channels for the users it holds, and any server can publish to fan a message out to whichever server owns the recipient. A cache tracks presence — who is online and which server currently holds their connection — so routing stays fast.\n\nMessages also have to survive. History must be durable and readable later, but writing to storage can't slow delivery. So push each message onto a queue and persist it to a NoSQL store off the hot path. Delivery stays instant; history is written reliably in the background. Build the fleet, wire the fan-out, and keep persistence asynchronous.",
+  "objectives": ["Persistent WebSocket connections", "Pub/Sub fan-out across servers", "Presence and connection routing", "Durable message history"],
+  "specs": {
+    "functional": [
+      "Deliver messages in real time over persistent connections",
+      "Fan a message out to a recipient on any server",
+      "Track who is online and where they're connected",
+      "Persist full message history durably"
+    ],
+    "nonFunctional": [
+      "Message delivery under 150 ms at p99",
+      "No messages dropped, even across server restarts",
+      "Survive the loss of any single WebSocket server"
+    ],
+    "constraints": [
+      "Clients connect only through the load balancer",
+      "History is written off the delivery hot path"
+    ],
+    "budgetPerHr": 7.0,
+    "latencyTargetMs": 150,
+    "capacity": ["~1,000,000 concurrent connections", "Tens of thousands of messages/sec"],
+    "tradeoff": "Pushing history through a queue trades write-time immediacy for fast, reliable delivery and durable storage that never blocks a send.",
+    "bonus": "Add Monitoring to track connection counts, fan-out lag, and queue depth."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Connect clients through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "websocket-server", "label": "Route connections to a WebSocket Server" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "pub-sub", "label": "Fan messages out across servers via Pub/Sub" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "cache", "label": "Track presence and connection routing in the Cache" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "message-queue", "label": "Enqueue messages for durable persistence" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "nosql-database", "label": "Persist message history to the NoSQL store" },
+    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "websocket-server",
+      "message": "Connections must enter through the Load Balancer, not straight to a WebSocket server."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients must never read the history store directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "websocket-server",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "History access must go through the WebSocket tier and its persistence pipeline."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "websocket-server",
+      "message": "Run at least two WebSocket servers so a single failure doesn't drop every open connection."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "websocket-server",
+      "companionComponentId": "pub-sub",
+      "message": "Cross-server delivery needs Pub/Sub to fan messages out to whichever server holds the recipient."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "websocket-server", "pub-sub", "message-queue", "nosql-database", "cache", "monitoring"],
+  "hints": [
+    "Clients hold a persistent connection: Client → Load Balancer → WebSocket Server. Run at least two WebSocket servers so no single failure disconnects everyone.",
+    "Connect the WebSocket servers to Pub/Sub so a message from one server reaches a recipient on any other, and use the Cache for presence and connection routing.",
+    "Don't write history on the delivery path — push messages onto the Message Queue and persist them to the NoSQL store from there."
+  ]
+}

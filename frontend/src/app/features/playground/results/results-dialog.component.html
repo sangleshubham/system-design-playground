@@ -1,0 +1,94 @@
+<button type="button" class="backdrop" (click)="dismiss.emit()" aria-label="Close results"></button>
+
+<div class="results card shadow-elevated" role="dialog" aria-modal="true" aria-label="Evaluation results">
+  <button type="button" class="close-x" (click)="dismiss.emit()" aria-label="Close">
+    <app-icon name="close" />
+  </button>
+
+  <div class="dial-row">
+    <div class="dial" [class.pass]="result().passed">
+      <svg viewBox="0 0 120 120">
+        <circle class="track" cx="60" cy="60" r="52" />
+        <circle
+          class="value"
+          cx="60"
+          cy="60"
+          r="52"
+          [style.stroke-dasharray]="circumference"
+          [style.stroke-dashoffset]="dashOffset()"
+        />
+      </svg>
+      <div class="dial-label">
+        <span class="total">{{ result().total }}</span>
+        <span class="of">/ 100</span>
+        <span class="grade" [attr.data-grade]="grade()">Grade {{ grade() }}</span>
+      </div>
+    </div>
+    <div class="verdict">
+      @if (result().passed) {
+        <h2 class="pass-title">🎉 Level complete!</h2>
+        <p>You scored {{ result().total }} — above the 90 pass mark.</p>
+      } @else {
+        <h2>Not quite — {{ result().total }}/100</h2>
+        <p>You need 90 to pass. Your canvas is untouched; tweak it and run again.</p>
+      }
+      @if (best() !== null) {
+        <p class="best">Best: {{ best() }}</p>
+      }
+    </div>
+  </div>
+
+  @if (hasStats()) {
+    <div class="stat-tiles">
+      @if (costPerHr() !== null) {
+        <div class="tile">
+          <span class="tile-value">${{ costPerHr()!.toFixed(1) }}</span>
+          <span class="tile-label">Cost/hr</span>
+        </div>
+      }
+      @if (nodeCount() !== null) {
+        <div class="tile">
+          <span class="tile-value">{{ nodeCount() }}</span>
+          <span class="tile-label">Nodes</span>
+        </div>
+      }
+      @if (edgeCount() !== null) {
+        <div class="tile">
+          <span class="tile-value">{{ edgeCount() }}</span>
+          <span class="tile-label">Edges</span>
+        </div>
+      }
+    </div>
+  }
+
+  <div class="dimensions">
+    @for (d of dimensions(); track d.dimension) {
+      <div class="dim">
+        <div class="dim-head">
+          <span class="dim-name">{{ d.label }}</span>
+          <span class="dim-score">{{ d.score }}</span>
+        </div>
+        <div class="bar">
+          <div class="bar-fill" [style.width.%]="d.score"></div>
+        </div>
+        <ul class="findings">
+          @for (f of d.findings; track $index) {
+            <li [class.ok]="f.ok" [class.bad]="!f.ok">
+              <app-icon [name]="f.ok ? 'check' : 'close'" />
+              <span>{{ f.message }}</span>
+            </li>
+          }
+        </ul>
+      </div>
+    }
+  </div>
+
+  <div class="actions">
+    @if (result().passed && result().unlockedLevelId) {
+      <button type="button" class="btn primary" (click)="onNext()">Next level →</button>
+    }
+    <button type="button" class="btn ghost" (click)="dismiss.emit()">
+      {{ result().passed ? 'Stay here' : 'Revise & re-run' }}
+    </button>
+  </div>
+</div>

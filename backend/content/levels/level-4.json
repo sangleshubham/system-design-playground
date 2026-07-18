@@ -1,0 +1,76 @@
+{
+  "id": "level-4",
+  "actId": "act-1",
+  "order": 4,
+  "title": "Rate Limiter",
+  "difficulty": "medium",
+  "summary": "Stand up a distributed rate limiter that throttles abusive traffic before it can crush your app tier.",
+  "narrative": "Success brought scrapers. A handful of clients are now hammering your API thousands of times a second — replaying tokens, brute-forcing endpoints, and starving legitimate users of capacity. Your web servers are healthy, but they're drowning in requests that never should have reached them.\n\nThe fix is a rate limiter that sits in the request path, in front of the app tier. Each incoming call is checked against a token bucket keyed by client or API key: if the bucket has tokens, the request passes and a token is spent; if it's empty, the request is rejected with a 429 before it ever touches a web server. The subtlety is that you run several rate-limiter instances behind a load balancer, so the counters can't live in any one of them — they must sit in a shared cache (think Redis) that every instance reads and writes.\n\nBuild the throttle: route clients through the load balancer into the rate limiter, back the limiter with a shared cache for its counters, and only let approved traffic continue to the web servers and on to the datastore. Get it right and the abusers hit a wall while everyone else sails through.",
+  "objectives": ["Request throttling", "Shared token-bucket counters", "Protecting downstream services", "Fail-fast rejection"],
+  "specs": {
+    "functional": [
+      "Check every request against a per-client rate limit",
+      "Reject over-limit traffic before it reaches the app tier",
+      "Share counters across all rate-limiter instances",
+      "Pass approved requests through to the web servers and datastore"
+    ],
+    "nonFunctional": [
+      "A burst of abuse must not degrade service for well-behaved clients",
+      "Limit decisions add negligible latency to legitimate requests",
+      "No single web-server failure takes the API offline"
+    ],
+    "constraints": [
+      "All client traffic enters through the load balancer",
+      "Every request is throttled before it reaches a web server"
+    ],
+    "budgetPerHr": 5.0,
+    "latencyTargetMs": 200,
+    "capacity": ["~20,000 requests/sec at the edge, most rejected under attack", "Millions of distinct client keys tracked in the cache"],
+    "tradeoff": "Centralizing counters in a shared cache trades a tiny bit of added latency and a new dependency for limits that hold correctly no matter which limiter node sees the request.",
+    "bonus": "Add Monitoring so you can watch rejection rates and spot an attack as it ramps."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "rate-limiter", "label": "Add a Rate Limiter in front of the app tier" },
+    { "id": "m2", "kind": "add", "componentId": "cache", "label": "Add a Cache for shared token-bucket counters" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route Client traffic through the Load Balancer" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "rate-limiter", "label": "Send balanced traffic into the Rate Limiter" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "rate-limiter", "toComponentId": "cache", "label": "Store counters in the shared Cache" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "rate-limiter", "toComponentId": "web-server", "label": "Pass approved requests to the app tier" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Let the app tier read/write the datastore" },
+    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for rejection rates", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Clients must not reach the app tier directly — traffic has to be throttled first."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "rate-limiter",
+      "fromComponentId": "load-balancer",
+      "toComponentId": "web-server",
+      "message": "Every request bound for a Web Server must pass through the Rate Limiter."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "requires-companion",
+      "componentId": "rate-limiter",
+      "companionComponentId": "cache",
+      "message": "A distributed Rate Limiter needs a shared Cache — otherwise each instance keeps its own counts and limits leak."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so the app tier survives a single failure."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "rate-limiter", "cache", "web-server", "sql-database", "monitoring"],
+  "hints": [
+    "The Rate Limiter belongs between the Load Balancer and the Web Servers. Wire Client → Load Balancer → Rate Limiter → Web Server so nothing reaches the app tier unchecked.",
+    "Multiple limiter instances can't each keep their own count. Connect the Rate Limiter to a Cache so every instance shares one token bucket per client.",
+    "Add a second Web Server for redundancy, and drop in Monitoring to watch how many requests are being rejected as an attack builds."
+  ]
+}

@@ -1,0 +1,77 @@
+<div class="palette-head">
+  <div class="search">
+    <app-icon name="search" />
+    <input
+      type="text"
+      placeholder="Search components…"
+      [value]="search()"
+      (input)="search.set($any($event.target).value)"
+    />
+  </div>
+
+  @if (hasRecommendations()) {
+    <button type="button" class="mode-toggle" (click)="toggleMode()">
+      {{ mode() === 'recommended' ? 'Show all components (' + totalCount() + ')' : 'Recommended only' }}
+    </button>
+  }
+</div>
+
+<!-- Sticky note item -->
+<div class="sticky-item" fExternalItem [fData]="{ note: true }" fExternalItemId="sticky-note">
+  <app-icon name="note" />
+  <span>Drag to add a note</span>
+</div>
+
+<div class="groups">
+  @for (group of groups(); track group.key) {
+    <section class="group">
+      <h4 class="group-title">{{ group.label }}</h4>
+      <div class="cards">
+        @for (c of group.items; track c.id) {
+          <div
+            class="pal-card"
+            fExternalItem
+            [fData]="{ componentId: c.id }"
+            [fExternalItemId]="c.id"
+            cdkOverlayOrigin
+            #origin="cdkOverlayOrigin"
+            (mouseenter)="hovered.set(c)"
+            (mouseleave)="hovered.set(null)"
+            (mousedown)="hovered.set(null)"
+          >
+            <span class="pal-icon"><app-icon [name]="iconFor(c)" /></span>
+            <span class="pal-body">
+              <span class="pal-name">{{ c.name }}</span>
+              <span class="pal-tech">{{ c.tech }}</span>
+            </span>
+            @if (isNeeded(c.id)) {
+              <span class="needed">NEEDED</span>
+            }
+
+            <ng-template
+              cdkConnectedOverlay
+              [cdkConnectedOverlayOrigin]="origin"
+              [cdkConnectedOverlayOpen]="hovered()?.id === c.id"
+              [cdkConnectedOverlayPositions]="[
+                { originX: 'end', originY: 'top', overlayX: 'start', overlayY: 'top', offsetX: 8 },
+                { originX: 'start', originY: 'top', overlayX: 'end', overlayY: 'top', offsetX: -8 }
+              ]"
+            >
+              <div class="metadata-card shadow-elevated">
+                <div class="md-name">{{ c.name }}</div>
+                <div class="md-tech">{{ c.tech }}</div>
+                <p class="md-desc">{{ c.description }}</p>
+                <div class="md-stats">
+                  <span>{{ money(c.costPerHr) }}</span>
+                  <span>{{ c.latencyMs }}ms</span>
+                </div>
+              </div>
+            </ng-template>
+          </div>
+        }
+      </div>
+    </section>
+  } @empty {
+    <p class="empty">No components match “{{ search() }}”.</p>
+  }
+</div>

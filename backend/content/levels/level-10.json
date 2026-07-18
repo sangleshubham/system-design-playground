@@ -1,0 +1,82 @@
+{
+  "id": "level-10",
+  "actId": "act-2",
+  "order": 10,
+  "title": "Search Autocomplete",
+  "difficulty": "expert",
+  "summary": "Serve ranked type-ahead completions in milliseconds by precomputing them from the query stream.",
+  "narrative": "The suggestion box under the search bar feels like magic: you type \"sys\" and it already knows you want \"system design\". The trick is that none of that ranking happens while you type. If it did, you'd never hit the sub-50 ms budget a keystroke demands.\n\nThe answer is to split the problem in two. The serving path is deliberately tiny — a request enters through the load balancer, hits a stateless web server, and looks up completions in a search index that is organized by prefix. A cache of the hottest prefixes sits in front so the queries everyone types never even reach the index. Nothing on this path does any thinking.\n\nAll the thinking happens offline. Every query users run is logged onto a message queue, and a stream processor consumes that stream, aggregates how often each term is searched, and writes the top completions per prefix into the index. Persist the rolling counts in a durable datastore so the whole structure can be rebuilt. Get this split right and the suggestions stay fresh while every keystroke stays instant.",
+  "objectives": ["Prefix search", "Top-K prefix caching", "Log-driven pipelines", "Stream aggregation"],
+  "specs": {
+    "functional": [
+      "Return ranked completions for any typed prefix",
+      "Serve the most popular prefixes straight from cache",
+      "Rebuild suggestions continuously from the live query stream",
+      "Rank completions by how often users search them"
+    ],
+    "nonFunctional": [
+      "Popular prefixes return in under 50 ms at p99",
+      "Suggestions reflect trending queries within minutes",
+      "The serving path never blocks on the build pipeline"
+    ],
+    "constraints": [
+      "Clients enter only through the load balancer",
+      "The search index is reachable only from the app tier"
+    ],
+    "budgetPerHr": 8.0,
+    "latencyTargetMs": 120,
+    "capacity": ["~50,000 keystroke lookups/sec", "Billions of historical queries in the logs"],
+    "tradeoff": "Precomputing completions offline trades instant freshness for a serving path fast enough to keep up with every keystroke.",
+    "bonus": "Add Monitoring & Alerting to watch suggestion latency and the freshness lag of the build pipeline."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route the Client through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance keystroke lookups across the app tier" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Look up completions by prefix in the Search Index" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Serve the hottest prefixes from Cache first" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Log every query onto the Message Queue" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Consume the query stream in a Stream Processor" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "search-index", "label": "Write the top completions per prefix into the index" },
+    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Keystrokes must enter through the Load Balancer, not straight to a Web Server."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "search-index",
+      "message": "Clients never query the Search Index directly; the app tier owns it."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "search-index",
+      "message": "Every lookup against the Search Index must pass through the application tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so a lookup never depends on a single instance."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "stream-processor",
+      "companionComponentId": "nosql-database",
+      "message": "Give the Stream Processor a NoSQL Database to persist rolling query counts the index can be rebuilt from."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "cache", "search-index", "stream-processor", "message-queue", "nosql-database", "monitoring"],
+  "hints": [
+    "The read path must be tiny: Client -> Load Balancer -> Web Server, then check the Cache of hot prefixes before falling back to the Search Index.",
+    "Suggestions don't build themselves. Have the Web Server log every query to the Message Queue, and a Stream Processor consume that stream to write the top completions into the Search Index.",
+    "Run at least two Web Servers, and give the Stream Processor a NoSQL Database to persist rolling query counts so the index survives a rebuild."
+  ]
+}

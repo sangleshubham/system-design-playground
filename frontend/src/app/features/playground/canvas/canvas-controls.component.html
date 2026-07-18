@@ -1,0 +1,78 @@
+<div class="toolbar top">
+  <button
+    type="button"
+    (click)="undo()"
+    [disabled]="!store.canUndo() || store.locked()"
+    title="Undo ({{ undoHint }})"
+    aria-label="Undo"
+  >
+    <app-icon name="undo" />
+  </button>
+  <button
+    type="button"
+    (click)="redo()"
+    [disabled]="!store.canRedo() || store.locked()"
+    title="Redo ({{ redoHint }})"
+    aria-label="Redo"
+  >
+    <app-icon name="redo" />
+  </button>
+  <button
+    type="button"
+    (click)="copy()"
+    [disabled]="!store.canCopy()"
+    title="Copy ({{ copyHint }})"
+    aria-label="Copy selection"
+  >
+    <app-icon name="copy" />
+  </button>
+  <button
+    type="button"
+    (click)="paste()"
+    [disabled]="!store.canPaste()"
+    title="Paste ({{ pasteHint }})"
+    aria-label="Paste"
+  >
+    <app-icon name="paste" />
+  </button>
+  <span class="sep"></span>
+  <button type="button" (click)="tidy()" [disabled]="store.locked()" title="Tidy / auto-arrange" aria-label="Tidy">
+    <app-icon name="tidy" />
+  </button>
+  <button
+    type="button"
+    (click)="deleteSelection()"
+    [disabled]="!hasSelection() || store.locked()"
+    title="Delete selection ({{ deleteHint }})"
+    aria-label="Delete selection"
+  >
+    <app-icon name="trash" />
+  </button>
+  <button type="button" (click)="reset()" [disabled]="store.locked()" title="Reset canvas" aria-label="Reset canvas">
+    Reset
+  </button>
+</div>
+
+<div class="toolbar bottom">
+  <button type="button" (click)="zoomOut()" title="Zoom out ({{ zoomOutHint }})" aria-label="Zoom out">
+    <app-icon name="zoom-out" />
+  </button>
+  <button type="button" (click)="zoomIn()" title="Zoom in ({{ zoomInHint }})" aria-label="Zoom in">
+    <app-icon name="zoom-in" />
+  </button>
+  <button type="button" (click)="fit()" title="Fit to view ({{ fitHint }})" aria-label="Fit to view">
+    <app-icon name="fit" />
+  </button>
+  <button
+    type="button"
+    (click)="toggleLock()"
+    [class.active]="store.locked()"
+    title="Lock canvas"
+    aria-label="Lock canvas"
+  >
+    <app-icon name="lock-canvas" />
+  </button>
+  <button type="button" (click)="toggleFullscreen()" title="Fullscreen" aria-label="Fullscreen">
+    <app-icon name="fullscreen" />
+  </button>
+</div>

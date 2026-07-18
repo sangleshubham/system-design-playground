@@ -1,0 +1,76 @@
+{
+  "id": "level-6",
+  "actId": "act-1",
+  "order": 6,
+  "title": "Notification System",
+  "difficulty": "medium",
+  "summary": "Fan out push, SMS, and email through a queue and a pool of workers — without blocking the request that triggered them.",
+  "narrative": "A single user action can now spray thousands of notifications: a creator posts and every follower needs a push, an SMS, or an email. If you try to send all of that inline, the triggering request hangs for seconds and one flaky provider takes the whole endpoint down with it.\n\nThe pattern is asynchronous decoupling. The web tier does almost nothing: it validates the request and drops a job onto a message queue, then returns immediately. A pool of workers pulls jobs off the queue at its own pace and hands each one to a notification service that talks to the push, SMS, and email providers. Because the queue absorbs bursts and the workers scale independently, a spike in sends never touches request latency. And because deliveries fail — providers time out, numbers are invalid — you attach a dead letter queue: after a message exhausts its retries, the broker parks it there instead of dropping it, so failures can be inspected and replayed rather than silently lost.\n\nWire the pipeline end to end: client to the API gateway to the web tier, the web tier enqueues onto the message queue, workers drain the queue into the notification service, and poison messages spill into the dead letter queue. Run more than one worker so a single crash can't stall delivery.",
+  "objectives": ["Async decoupling via a queue", "Worker fan-out", "Reliable delivery", "Dead-letter handling of failures"],
+  "specs": {
+    "functional": [
+      "Accept a notification request and return before anything is delivered",
+      "Enqueue delivery jobs onto a message queue",
+      "Have workers pull jobs and dispatch push/SMS/email via the notification service",
+      "Capture messages that fail after retries in a dead letter queue"
+    ],
+    "nonFunctional": [
+      "A burst of sends must not increase request latency",
+      "A slow or failing provider must not block the request path",
+      "A single worker crash must not stall the pipeline"
+    ],
+    "constraints": [
+      "Requests enter through the API gateway",
+      "Notifications are never sent synchronously from the request path"
+    ],
+    "budgetPerHr": 6.0,
+    "latencyTargetMs": 350,
+    "capacity": ["~5,000 enqueued jobs/sec at peak fan-out", "Millions of notifications delivered per day"],
+    "tradeoff": "A queue-and-worker pipeline trades immediate, in-line delivery for resilience and scale — you accept eventual delivery in exchange for bursts that never hurt latency and failures you can replay.",
+    "bonus": "Add Monitoring to watch queue depth and delivery success rate."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "message-queue", "label": "Add a Message Queue to decouple accept from deliver" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "api-gateway", "label": "Route Client requests to the API Gateway" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "api-gateway", "toComponentId": "web-server", "label": "Accept notification requests at the web tier" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Enqueue jobs instead of sending inline" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let Workers pull jobs off the queue" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Deliver via push/SMS/email" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park messages that exhaust their retries" },
+    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for queue depth and delivery rate", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "notification-service",
+      "message": "Don't call the delivery service from the request path — enqueue the work so the request returns fast."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "notification-service",
+      "message": "Notifications must flow through the Message Queue and Workers, never straight from the web tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so one crash doesn't stall the whole delivery pipeline."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "A Message Queue needs a Dead Letter Queue so messages that fail after retries are parked, not dropped."
+    }
+  ],
+  "recommendedComponentIds": ["client", "api-gateway", "web-server", "message-queue", "worker", "notification-service", "dead-letter-queue", "monitoring"],
+  "hints": [
+    "The web tier should do almost nothing: validate the request, drop a job on the Message Queue, and return. Wire Client → API Gateway → Web Server → Message Queue.",
+    "Workers pull jobs off the queue and hand them to the Notification Service for push/SMS/email. Run at least two Workers so a single crash doesn't halt delivery.",
+    "Connect the Message Queue to a Dead Letter Queue so poison messages are parked for inspection instead of lost, and add Monitoring to watch queue depth and success rate."
+  ]
+}

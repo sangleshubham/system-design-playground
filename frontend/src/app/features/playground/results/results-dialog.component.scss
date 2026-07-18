@@ -1,0 +1,218 @@
+:host {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  cursor: default;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.results {
+  position: relative;
+  width: min(560px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--surface-raised);
+}
+
+.close-x {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+}
+
+.dial-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+.dial {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+}
+.dial svg {
+  transform: rotate(-90deg);
+  width: 120px;
+  height: 120px;
+}
+.dial .track {
+  fill: none;
+  stroke: var(--surface-2);
+  stroke-width: 10;
+}
+.dial .value {
+  fill: none;
+  stroke: var(--color-danger);
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s ease;
+}
+.dial.pass .value {
+  stroke: var(--color-success);
+}
+.dial-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.dial-label .total {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+.dial-label .of {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.dial-label .grade {
+  margin-top: 2px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dial-label .grade[data-grade='A'] {
+  color: var(--color-success);
+}
+.dial-label .grade[data-grade='B'] {
+  color: var(--color-primary);
+}
+.dial-label .grade[data-grade='D'],
+.dial-label .grade[data-grade='F'] {
+  color: var(--color-danger);
+}
+
+.stat-tiles {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.stat-tiles .tile {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--surface-1);
+}
+.stat-tiles .tile-value {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.stat-tiles .tile-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.verdict h2 {
+  margin: 0 0 6px;
+}
+.verdict p {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+}
+.pass-title {
+  color: var(--color-success);
+}
+.best {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.dimensions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dim-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+.dim-score {
+  color: var(--color-primary);
+}
+.bar {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 999px;
+  transition: width 0.5s ease;
+}
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.findings li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.findings li.ok app-icon {
+  color: var(--color-success);
+}
+.findings li.bad app-icon {
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+.btn {
+  padding: 9px 18px;
+  border-radius: var(--radius-control);
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.btn.primary {
+  background: var(--color-run);
+  color: var(--color-run-contrast);
+}
+.btn.ghost {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}

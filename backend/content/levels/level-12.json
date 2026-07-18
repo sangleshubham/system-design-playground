@@ -1,0 +1,83 @@
+{
+  "id": "level-12",
+  "actId": "act-2",
+  "order": 12,
+  "title": "Video Streaming Platform",
+  "difficulty": "legendary",
+  "summary": "Build a YouTube-scale platform: upload once, transcode asynchronously, and stream globally from the edge.",
+  "narrative": "This is the capstone. A creator uploads a two-hour 4K file from a laptop in Berlin; minutes later a viewer in Sao Paulo taps play and it starts instantly at whatever quality their connection can handle. Between those two moments sits nearly every pattern you have learned so far, assembled into one system.\n\nStart with the two paths that must never interfere. The control path carries metadata and uploads: clients enter through a load balancer, an API gateway routes and authorizes each call, and a redundant web tier reads and writes a metadata database with a cache in front for the hot rows. Uploads themselves stream straight into blob storage — the app tier never holds the bytes. The moment an upload lands, the web server drops a job on a message queue.\n\nThat queue feeds the second path: a fleet of transcoding workers that turn each raw upload into a ladder of renditions and write them back to blob storage, all asynchronously so a transcode backlog can never stall ingest or playback. Finally comes global delivery — playback traffic goes Client to CDN, and the CDN pulls transcoded segments from blob storage as its origin. Keep the paths separate, keep the origin protected, and the whole world can press play at once.",
+  "objectives": ["Upload to object storage", "Async transcoding", "CDN global delivery", "Metadata and caching", "Gateway-routed APIs"],
+  "specs": {
+    "functional": [
+      "Accept large video uploads into durable object storage",
+      "Transcode each upload into multiple renditions asynchronously",
+      "Stream video to viewers worldwide from the edge",
+      "Store and serve video metadata for browse and playback"
+    ],
+    "nonFunctional": [
+      "Playback starts fast for viewers anywhere on Earth",
+      "A transcode backlog never blocks uploads or playback",
+      "The metadata API survives the loss of any single app server"
+    ],
+    "constraints": [
+      "API traffic enters through the load balancer and gateway only",
+      "Clients never touch object storage directly",
+      "Every API call is routed and authorized by the gateway"
+    ],
+    "budgetPerHr": 10.0,
+    "latencyTargetMs": 200,
+    "capacity": ["~500 hours of video uploaded per minute", "Millions of concurrent viewers globally"],
+    "tradeoff": "Decoupling transcoding behind a queue trades immediate availability of a new upload for an ingest path that never stalls under load.",
+    "bonus": "Add Monitoring & Alerting to watch transcode queue depth, CDN hit ratio, and playback errors."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Send API traffic to the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "api-gateway", "toComponentId": "web-server", "label": "Route authorized calls to the app tier" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache hot video metadata" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Persist metadata in the SQL Database" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Store the uploaded video in Blob Storage" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Queue an async transcode job on upload" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let the transcoder fleet pull jobs" },
+    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "API traffic enters through the Load Balancer and Gateway, never straight to a Web Server."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "blob-storage",
+      "message": "Clients never touch object storage directly; playback goes through the CDN and uploads through the app tier."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "api-gateway",
+      "fromComponentId": "load-balancer",
+      "toComponentId": "web-server",
+      "message": "Every API call must be routed and authorized by the API Gateway before it reaches the app tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so the metadata API survives the loss of any single instance."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "blob-storage",
+      "companionComponentId": "cdn",
+      "message": "Front Blob Storage with a CDN, or global playback will crush the origin."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "load-balancer", "api-gateway", "web-server", "cache", "sql-database", "blob-storage", "message-queue", "worker", "monitoring"],
+  "hints": [
+    "Split the system in two: an API path (Client -> Load Balancer -> API Gateway -> Web Server) for metadata and uploads, and a playback path (Client -> CDN -> Blob Storage) for watching.",
+    "Uploads land in Blob Storage; the Web Server then drops a job on the Message Queue so a fleet of transcoding Workers can process renditions asynchronously.",
+    "Front Blob Storage with the CDN for global delivery, cache hot metadata, keep the SQL Database as the source of truth, and run at least two Web Servers."
+  ]
+}

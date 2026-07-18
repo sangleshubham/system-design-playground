@@ -1,0 +1,113 @@
+@use './styles/tokens';
+
+// Reset
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+// Typography
+body {
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: var(--surface-0);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0 0 0.5em;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+h1 {
+  font-size: 1.75rem;
+}
+
+h2 {
+  font-size: 1.375rem;
+}
+
+h3 {
+  font-size: 1.125rem;
+}
+
+p {
+  margin: 0 0 1em;
+  color: var(--text-secondary);
+}
+
+// Foblex Flow default-theme reset.
+// angular.json loads @foblex/flow/styles/default.scss, which paints every
+// .f-node as a fixed 120px framed white box (width/padding/border/shadow/
+// centered text) behind our custom node cards. Strip that frame here — this
+// file loads after the theme, so equal-specificity rules win by cascade order.
+// The rest of the theme stays: connection strokes, the drag-to-connect
+// preview, and connectable/connected socket states.
+// Both selector forms are needed: the theme emits `f-flow .f-node` AND
+// `.f-flow .f-node`, and the class variant (0,2,0) out-specifies an
+// element-scoped override.
+f-flow .f-node,
+.f-flow .f-node {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  text-align: start;
+  background: none;
+  border: none;
+  box-shadow: none;
+
+  &.f-selected,
+  &.f-dragging {
+    box-shadow: none;
+  }
+}
+
+// Utilities
+.card {
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+
+.shadow-soft {
+  box-shadow: var(--shadow-soft);
+}
+
+.shadow-elevated {
+  box-shadow: var(--shadow-elevated);
+}

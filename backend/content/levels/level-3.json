@@ -1,0 +1,82 @@
+{
+  "id": "level-3",
+  "actId": "act-1",
+  "order": 3,
+  "title": "URL Shortener",
+  "difficulty": "medium",
+  "summary": "Build a read-heavy service that turns long URLs into short codes and redirects at scale.",
+  "narrative": "A URL shortener looks trivial and is secretly a masterclass in scale. Writes are rare — someone creates a short link now and then. Reads are enormous — every click on every shortened link, forever, is a lookup that must resolve in milliseconds.\n\nThat lopsided read/write ratio drives the whole design. You want a datastore that scales reads horizontally, a cache to serve the hottest links from memory, and an app tier behind a load balancer to glue it together. Clients should never touch the datastore directly.\n\nWire up the read path so a redirect hits the cache first and falls back to the store, and keep the write path clean. A Bloom filter can cheaply reject codes that were never issued.",
+  "objectives": ["Read-heavy scaling", "Cache-aside pattern", "Key-value storage", "Probabilistic filters"],
+  "specs": {
+    "functional": [
+      "Create a short code for a long URL",
+      "Redirect a short code to its original URL",
+      "Serve the hottest links from cache"
+    ],
+    "nonFunctional": [
+      "Redirects resolve in under 50 ms at p99",
+      "Sustain a 100:1 read-to-write ratio"
+    ],
+    "constraints": [
+      "Clients enter through the load balancer only",
+      "The datastore is reachable only from the app tier"
+    ],
+    "budgetPerHr": 8.0,
+    "latencyTargetMs": 200,
+    "capacity": ["~10,000 redirects/sec", "Billions of stored mappings"],
+    "tradeoff": "A cache-aside layer trades occasional stale reads and added complexity for dramatically lower datastore load.",
+    "bonus": "Add a Bloom Filter so lookups for codes that were never issued skip the datastore entirely."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client" },
+    { "id": "m2", "kind": "add", "componentId": "load-balancer", "label": "Add a Load Balancer" },
+    { "id": "m3", "kind": "add", "componentId": "web-server", "label": "Add a Web Server" },
+    { "id": "m4", "kind": "add", "componentId": "cache", "label": "Add a Cache for hot redirects" },
+    { "id": "m5", "kind": "add", "componentId": "nosql-database", "label": "Add a NoSQL Database for the mappings" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route clients to the Load Balancer" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance across the app tier" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Check the Cache first" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Fall back to the Database on a miss" },
+    { "id": "m10", "kind": "add", "componentId": "bloom-filter", "label": "Add a Bloom Filter", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Traffic must enter through the Load Balancer."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients must never reach the datastore directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Datastore access must pass through the application tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so a redirect never depends on a single instance."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "nosql-database",
+      "companionComponentId": "cache",
+      "message": "Front the datastore with a Cache to protect it from the read flood."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "cache", "nosql-database", "bloom-filter", "monitoring"],
+  "hints": [
+    "The read path is what matters: Client → Load Balancer → Web Server → Cache, with the NoSQL Database behind the cache.",
+    "Connect the Web Server to BOTH the Cache and the Database — cache first, database on a miss.",
+    "Add a second Web Server to remove the single point of failure, and wire the Cache to the Database so they're companions."
+  ]
+}

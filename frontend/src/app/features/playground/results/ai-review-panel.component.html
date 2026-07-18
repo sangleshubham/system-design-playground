@@ -1,0 +1,152 @@
+<button type="button" class="backdrop" (click)="dismiss()" aria-label="Close AI Design Review"></button>
+<div class="panel" role="dialog" aria-label="AI Design Review">
+  <button type="button" class="close-x" (click)="dismiss()" aria-label="Close">
+    <app-icon name="close" />
+  </button>
+
+  @switch (state()) {
+    @case ('loading') {
+      <div class="state-running">
+        <div class="spinner" aria-hidden="true"></div>
+        <h3>Loading…</h3>
+        <p class="hint">Checking for a saved review of this design.</p>
+      </div>
+    }
+
+    @case ('running') {
+      <div class="state-running">
+        <div class="spinner" aria-hidden="true"></div>
+        <h3>Reviewing your design…</h3>
+        <p class="elapsed">{{ elapsedSeconds() }}s elapsed</p>
+        @if (deep()) {
+          <p class="hint">Deep review — stronger model, may take longer.</p>
+        }
+        <button type="button" class="btn-secondary" (click)="cancel()">Cancel</button>
+      </div>
+    }
+
+    @case ('review') {
+      @if (review(); as r) {
+        <div class="state-review">
+          <div class="score-row">
+            <div class="score-dial">{{ r.payload.score }}</div>
+            <div>
+              <p class="verdict">{{ r.payload.verdict }}</p>
+              <p class="model-tag">
+                {{ isDeepReview() ? 'Deep review (deepseek-v4-pro)' : 'Flash review' }}
+                @if (fromCache()) {
+                  <span class="cached-badge" title="Served from a saved review — no new tokens spent">Cached</span>
+                }
+              </p>
+            </div>
+          </div>
+
+          <section class="block">
+            <h4>Dimensions</h4>
+            <ul class="dimensions">
+              @for (d of dimensionRows(); track d.name) {
+                <li>
+                  <div class="dim-head">
+                    <span class="dim-label">{{ d.label }}</span>
+                    <span class="dim-score">{{ d.score }}</span>
+                  </div>
+                  <p class="dim-comment">{{ d.comment }}</p>
+                </li>
+              }
+            </ul>
+          </section>
+
+          <section class="block cols">
+            <div>
+              <h4>Strengths</h4>
+              <ul class="bullets">
+                @for (s of r.payload.strengths; track s) {
+                  <li>{{ s }}</li>
+                }
+              </ul>
+            </div>
+            <div>
+              <h4>Gaps</h4>
+              <ul class="bullets">
+                @for (g of r.payload.gaps; track g) {
+                  <li>{{ g }}</li>
+                }
+              </ul>
+            </div>
+          </section>
+
+          <section class="block">
+            <h4>How real systems do it</h4>
+            <p class="reference">{{ r.payload.realWorldComparison.referenceArchitecture }}</p>
+            @if (r.payload.realWorldComparison.matches.length) {
+              <p class="sub-label">Matches</p>
+              <ul class="bullets">
+                @for (m of r.payload.realWorldComparison.matches; track m) {
+                  <li>{{ m }}</li>
+                }
+              </ul>
+            }
+            @if (r.payload.realWorldComparison.differences.length) {
+              <p class="sub-label">Differences</p>
+              <ul class="bullets">
+                @for (diff of r.payload.realWorldComparison.differences; track diff) {
+                  <li>{{ diff }}</li>
+                }
+              </ul>
+            }
+          </section>
+
+          <section class="block">
+            <h4>Next steps</h4>
+            <ul class="bullets">
+              @for (n of r.payload.nextSteps; track n) {
+                <li>{{ n }}</li>
+              }
+            </ul>
+          </section>
+
+          <div class="actions">
+            @if (!isDeepReview()) {
+              <button type="button" class="btn-secondary" (click)="runDeepReview()">
+                <app-icon name="star" /> Run deep review
+              </button>
+            }
+            <button type="button" class="btn-secondary" (click)="rerun()">
+              <app-icon name="refresh" /> Re-run review
+            </button>
+          </div>
+        </div>
+      }
+    }
+
+    @case ('error') {
+      <div class="state-error">
+        <app-icon name="alert" />
+        <p class="error-message">{{ error()?.message }}</p>
+        @if (retryable()) {
+          <button type="button" class="btn-primary" (click)="retry()">
+            <app-icon name="refresh" /> Retry
+          </button>
+        }
+      </div>
+    }
+
+    @default {
+      <div class="state-idle">
+        <h3>AI Design Review</h3>
+        @if (designChanged()) {
+          <p class="stale-note">Your design changed since the last review. Run it again for fresh feedback.</p>
+        }
+        <p>
+          Get a score, per-dimension commentary, and a real-world comparison for your
+          saved design.
+        </p>
+        <label class="deep-toggle">
+          <input type="checkbox" [checked]="deep()" (change)="toggleDeep()" />
+          Deep review — slower, stronger model
+        </label>
+        <button type="button" class="btn-primary" (click)="start()">Start Review</button>
+      </div>
+    }
+  }
+</div>

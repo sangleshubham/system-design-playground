@@ -1,0 +1,14 @@
+[
+  {
+    "id": "act-1",
+    "order": 1,
+    "title": "The Fundamentals",
+    "description": "Master the building blocks: serving content, scaling the tiers, and the core patterns every large system is assembled from."
+  },
+  {
+    "id": "act-2",
+    "order": 2,
+    "title": "Async & Real-Time",
+    "description": "Decouple with queues, push updates in real time, and tame the systems that must never sleep or drop a message."
+  }
+]

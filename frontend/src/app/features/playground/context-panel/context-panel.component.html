@@ -1,0 +1,135 @@
+@if (level(); as lvl) {
+  <div class="panel-scroll">
+    <!-- AI Review entry point -->
+    <section class="block">
+      <button
+        type="button"
+        class="ai-review-btn"
+        [disabled]="aiReviewDisabled()"
+        [title]="aiReviewHint()"
+        (click)="aiReview.emit()"
+      >
+        <app-icon name="star" /> AI Review
+      </button>
+      @if (canvasEmpty()) {
+        <p class="ai-review-hint">Add components to the canvas first.</p>
+      } @else if (!aiAvailable()) {
+        <p class="ai-review-hint">AI review isn't configured on this server.</p>
+      }
+    </section>
+
+    <!-- The Challenge -->
+    <section class="block">
+      <h3>The Challenge</h3>
+      @for (para of narrativeParagraphs(); track $index) {
+        <p class="narrative">{{ para }}</p>
+      }
+      @if (lvl.objectives.length) {
+        <div class="chips">
+          @for (obj of lvl.objectives; track obj) {
+            <span class="chip">{{ obj }}</span>
+          }
+        </div>
+      }
+    </section>
+
+    <!-- Mission checklist -->
+    <section class="block">
+      <div class="missions-head">
+        <h3>Missions</h3>
+        <span class="counter">{{ missionProgress().label }}</span>
+      </div>
+      <ul class="missions">
+        @for (m of missionStates(); track m.mission.id) {
+          <li class="mission" [class.done]="m.satisfied" [class.bonus]="m.mission.bonus">
+            <span class="checkbox" [class.checked]="m.satisfied">
+              @if (m.satisfied) {
+                <app-icon name="check" />
+              }
+            </span>
+            <span class="mission-label">{{ m.mission.label }}</span>
+            @if (m.mission.bonus) {
+              <span class="bonus-star" title="Bonus"><app-icon name="star" /></span>
+            }
+          </li>
+        }
+      </ul>
+    </section>
+
+    <!-- Specs -->
+    <section class="block">
+      <h3>Design Spec</h3>
+
+      <details open>
+        <summary>Functional</summary>
+        <ul class="spec-list">
+          @for (s of lvl.specs.functional; track s) {
+            <li>{{ s }}</li>
+          }
+        </ul>
+      </details>
+
+      <details>
+        <summary>Non-Functional</summary>
+        <ul class="spec-list">
+          @for (s of lvl.specs.nonFunctional; track s) {
+            <li>{{ s }}</li>
+          }
+        </ul>
+      </details>
+
+      <details>
+        <summary>Constraints</summary>
+        <ul class="spec-list">
+          @for (s of lvl.specs.constraints; track s) {
+            <li>{{ s }}</li>
+          }
+        </ul>
+      </details>
+
+      <details open>
+        <summary>Budget</summary>
+        <p class="spec-inline budget">{{ budgetLabel() }}</p>
+      </details>
+
+      <details>
+        <summary>Capacity</summary>
+        <ul class="spec-list">
+          @for (s of lvl.specs.capacity; track s) {
+            <li>{{ s }}</li>
+          }
+        </ul>
+      </details>
+
+      <details>
+        <summary>Key Trade-off</summary>
+        <p class="spec-inline">{{ lvl.specs.tradeoff }}</p>
+      </details>
+
+      @if (lvl.specs.bonus) {
+        <details>
+          <summary>Bonus</summary>
+          <p class="spec-inline">{{ lvl.specs.bonus }}</p>
+        </details>
+      }
+    </section>
+
+    <!-- Hints -->
+    <section class="block">
+      <h3>Hints <span class="free">(free)</span></h3>
+      @for (hint of revealedHints(); track $index) {
+        <div class="hint">
+          <span class="hint-num">{{ $index + 1 }}</span>
+          <span>{{ hint }}</span>
+        </div>
+      }
+      @if (hasMoreHints()) {
+        <button type="button" class="reveal" (click)="revealHint()">
+          Reveal {{ revealedHintCount() === 0 ? 'a hint' : 'the next hint' }}
+        </button>
+      } @else {
+        <p class="all-revealed">All hints revealed.</p>
+      }
+    </section>
+  </div>
+}

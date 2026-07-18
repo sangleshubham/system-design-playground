@@ -1,0 +1,82 @@
+{
+  "id": "level-7",
+  "actId": "act-1",
+  "order": 7,
+  "title": "Unique ID Generator",
+  "difficulty": "hard",
+  "summary": "Mint globally-unique, roughly time-sortable IDs at scale without a central bottleneck.",
+  "narrative": "Every tweet, order, and message needs an ID that is unique across your entire fleet, forever. The naive answer — an auto-increment column on one database — is both a bottleneck and a single point of failure: every write in the company waits in the same line. Random UUIDs dodge that, but they're bulky and shuffle randomly, so they wreck database locality.\n\nThe Snowflake approach threads the needle. Each 64-bit ID is a timestamp, a worker ID, and a per-millisecond sequence number stitched together. Because the high bits are time, the IDs come out roughly sorted; because each node owns its worker ID and its own sequence, every node mints IDs locally with zero coordination on the request path. The only thing that must be coordinated is making sure no two nodes ever claim the same worker ID.\n\nThat is exactly the job for ZooKeeper/etcd: when an ID service node boots, it leases a unique worker ID from the coordination service, caches its hot state, and persists the lease so a restart doesn't collide. Build the service behind a load balancer, keep coordination off the hot path, and never let the request depend on a shared counter.",
+  "objectives": ["Distributed ID generation", "Coordination with ZooKeeper/etcd", "Avoiding a central bottleneck", "Roughly-sortable IDs"],
+  "specs": {
+    "functional": [
+      "Generate globally-unique 64-bit IDs on demand",
+      "Produce IDs that are roughly time-sortable",
+      "Assign each node a unique worker ID at startup",
+      "Serve ID requests behind a load balancer"
+    ],
+    "nonFunctional": [
+      "Return an ID in single-digit milliseconds at p99",
+      "No coordination on the per-request hot path",
+      "Survive the loss of any single ID-service node"
+    ],
+    "constraints": [
+      "Clients enter through the load balancer only",
+      "Worker IDs are handed out only by the coordination service"
+    ],
+    "budgetPerHr": 6.0,
+    "latencyTargetMs": 150,
+    "capacity": ["~50,000 IDs/sec across the fleet", "Thousands of ID-service nodes over time"],
+    "tradeoff": "Local, coordination-free generation trades a little worker-id and clock bookkeeping for enormous throughput and no central bottleneck.",
+    "bonus": "Add Monitoring to watch clock skew, worker-id leases, and per-node throughput."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route ID requests through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance across the ID Service fleet" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "zookeeper-etcd", "label": "Lease a unique worker ID from ZooKeeper/etcd" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Keep hot ID-service state in the Cache" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Persist worker-id leases in the datastore" },
+    { "id": "m7", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring", "bonus": true },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "monitoring", "label": "Emit ID-service metrics to Monitoring", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "ID requests must enter through the Load Balancer, not straight to an ID node."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients must never reach the lease datastore directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Datastore access must pass through the ID-service tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two ID-service nodes so ID generation never depends on a single instance."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "web-server",
+      "companionComponentId": "zookeeper-etcd",
+      "message": "The ID service must coordinate worker IDs through ZooKeeper/etcd."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "zookeeper-etcd", "cache", "nosql-database", "monitoring"],
+  "hints": [
+    "The hot path is Client → Load Balancer → ID Service. Each node generates IDs locally, so no shared database sits on the critical path.",
+    "Wire every ID-service node to ZooKeeper/etcd: it hands out a unique worker ID at startup so two nodes never collide. That's the only coordination you need.",
+    "Run at least two ID-service nodes for resilience, keep hot state in the Cache, and persist worker-id leases in the datastore off the request path."
+  ]
+}

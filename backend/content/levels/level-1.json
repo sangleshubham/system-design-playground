@@ -1,0 +1,67 @@
+{
+  "id": "level-1",
+  "actId": "act-1",
+  "order": 1,
+  "title": "The Static App",
+  "difficulty": "easy",
+  "summary": "Serve a personal portfolio site to the world — fast, cheap, and everywhere.",
+  "narrative": "You've built a beautiful static portfolio: HTML, CSS, a few images. It works perfectly on your laptop. Now the whole world wants to see it, and a single server on your desk won't cut it.\n\nThe challenge is deceptively simple: get static content to visitors anywhere on Earth with low latency, without melting your one origin server every time a link goes viral. The lesson of this level is the single most important trick in web performance — push content to the edge and keep clients away from the origin.\n\nLay out a delivery path from the visitor's browser, through a content delivery network, back to the server and its asset storage. Get the flow right and the internet feels instant.",
+  "objectives": ["CDN & the edge", "Origin protection", "Static asset storage"],
+  "specs": {
+    "functional": [
+      "Serve HTML, CSS, JS, and images to any visitor",
+      "Deliver cached content from a location near the user",
+      "Keep the origin server reachable for cache misses"
+    ],
+    "nonFunctional": [
+      "Global median response under 300 ms",
+      "Survive a traffic spike without overloading the origin"
+    ],
+    "constraints": [
+      "Visitors must not hit the origin server directly",
+      "Static assets live in durable object storage, not on the server disk"
+    ],
+    "budgetPerHr": 3.0,
+    "latencyTargetMs": 300,
+    "capacity": ["~100 requests/sec at peak", "A few GB of static assets"],
+    "tradeoff": "Caching at the edge trades a little content freshness for a massive win in latency and origin load.",
+    "bonus": "Add Monitoring & Alerting so you know when the origin is struggling."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client (the visitor's browser)" },
+    { "id": "m2", "kind": "add", "componentId": "cdn", "label": "Add a CDN to cache content at the edge" },
+    { "id": "m3", "kind": "add", "componentId": "web-server", "label": "Add a Web Server as the origin" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Route the Client through the CDN" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "web-server", "label": "Let the CDN reach the origin Web Server on a miss" },
+    { "id": "m6", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Visitors must reach content through the CDN, never straight to the origin Web Server."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "cdn",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Traffic from the Client to the Web Server must pass through the CDN."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "requires-companion",
+      "componentId": "web-server",
+      "companionComponentId": "blob-storage",
+      "message": "A Web Server needs durable object storage (Blob Storage) to hold its static assets."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "web-server", "blob-storage", "monitoring"],
+  "hints": [
+    "Every design starts with the Client. Drag it on first, then think about what the request touches next.",
+    "The CDN sits between the Client and the origin. Wire Client → CDN → Web Server.",
+    "The Web Server reads its files from Blob Storage — connect them so your assets have a durable home."
+  ]
+}

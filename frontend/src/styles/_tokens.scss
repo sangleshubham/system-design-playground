@@ -1,0 +1,135 @@
+// Design tokens: CSS custom properties, themed via [data-theme] on :root.
+// Consumed by shared UI, feature components, and the Foblex Flow canvas alike
+// so canvas nodes/edges never hard-code colors.
+
+:root,
+:root[data-theme='light'] {
+  // Brand primary (indigo/violet)
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-active: #4338ca;
+  --color-primary-subtle: #eef2ff;
+  --color-primary-contrast: #ffffff;
+
+  // RUN action (green)
+  --color-run: #22c55e;
+  --color-run-hover: #16a34a;
+  --color-run-active: #15803d;
+  --color-run-contrast: #ffffff;
+
+  // NEEDED badge (amber)
+  --color-badge-needed-bg: #fef3c7;
+  --color-badge-needed-text: #92400e;
+  --color-badge-needed-border: #f59e0b;
+
+  // Component category colors (pastel bg + readable fg), 7 categories
+  --category-user-bg: #dbeafe;
+  --category-user-fg: #1e40af;
+  --category-networking-bg: #cffafe;
+  --category-networking-fg: #155e75;
+  --category-compute-bg: #ede9fe;
+  --category-compute-fg: #5b21b6;
+  --category-storage-bg: #ffedd5;
+  --category-storage-fg: #9a3412;
+  --category-caching-bg: #fce7f3;
+  --category-caching-fg: #9d174d;
+  --category-messaging-bg: #ccfbf1;
+  --category-messaging-fg: #115e59;
+  --category-services-bg: #f1f5f9;
+  --category-services-fg: #334155;
+
+  // Difficulty tiers, easy -> legendary
+  --difficulty-easy: #22c55e;
+  --difficulty-medium: #eab308;
+  --difficulty-hard: #f97316;
+  --difficulty-expert: #ef4444;
+  --difficulty-legendary: #a855f7;
+
+  // Surface / border / text scales
+  --surface-0: #ffffff;
+  --surface-1: #f8fafc;
+  --surface-2: #f1f5f9;
+  --surface-raised: #ffffff;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  // Feedback colors
+  --color-danger: #ef4444;
+  --color-danger-subtle: #fee2e2;
+  --color-warning: #f59e0b;
+  --color-success: #22c55e;
+
+  // Elevation / shape
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.06), 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-elevated: 0 8px 24px rgba(15, 23, 42, 0.14);
+  --radius-card: 12px;
+  --radius-control: 8px;
+
+  // Canvas
+  --canvas-bg: #f8fafc;
+  --canvas-dot: #cbd5e1;
+}
+
+:root[data-theme='dark'] {
+  --color-primary: #818cf8;
+  --color-primary-hover: #a5b4fc;
+  --color-primary-active: #c7d2fe;
+  --color-primary-subtle: #312e81;
+  --color-primary-contrast: #0f172a;
+
+  --color-run: #4ade80;
+  --color-run-hover: #86efac;
+  --color-run-active: #bbf7d0;
+  --color-run-contrast: #0f172a;
+
+  --color-badge-needed-bg: #451a03;
+  --color-badge-needed-text: #fcd34d;
+  --color-badge-needed-border: #d97706;
+
+  --category-user-bg: #1e3a5f;
+  --category-user-fg: #93c5fd;
+  --category-networking-bg: #164e63;
+  --category-networking-fg: #67e8f9;
+  --category-compute-bg: #3b2a6b;
+  --category-compute-fg: #c4b5fd;
+  --category-storage-bg: #5a3413;
+  --category-storage-fg: #fdba74;
+  --category-caching-bg: #5c1a3d;
+  --category-caching-fg: #f9a8d4;
+  --category-messaging-bg: #134e4a;
+  --category-messaging-fg: #5eead4;
+  --category-services-bg: #1e293b;
+  --category-services-fg: #cbd5e1;
+
+  --difficulty-easy: #4ade80;
+  --difficulty-medium: #facc15;
+  --difficulty-hard: #fb923c;
+  --difficulty-expert: #f87171;
+  --difficulty-legendary: #c084fc;
+
+  --surface-0: #0f172a;
+  --surface-1: #1e293b;
+  --surface-2: #273449;
+  --surface-raised: #1e293b;
+  --border-subtle: #334155;
+  --border-strong: #475569;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #64748b;
+
+  --color-danger: #f87171;
+  --color-danger-subtle: #450a0a;
+  --color-warning: #fbbf24;
+  --color-success: #4ade80;
+
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --radius-card: 12px;
+  --radius-control: 8px;
+
+  --canvas-bg: #0f172a;
+  --canvas-dot: #334155;
+}

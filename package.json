@@ -1,0 +1,16 @@
+{
+  "name": "system-design-playground",
+  "private": true,
+  "scripts": {
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm start --prefix frontend",
+    "test": "npm test --prefix backend && npm test --prefix frontend",
+    "lint": "npm run lint --prefix backend && npm run lint --prefix frontend",
+    "build": "npm run build --prefix frontend && npm run build --prefix backend",
+    "start:prod": "npm run start:prod --prefix backend"
+  },
+  "volta": {
+    "node": "22.18.0",
+    "npm": "10.9.3"
+  }
+}

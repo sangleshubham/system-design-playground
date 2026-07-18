@@ -1,0 +1,75 @@
+{
+  "id": "level-2",
+  "actId": "act-1",
+  "order": 2,
+  "title": "The 3-Tier Web App",
+  "difficulty": "easy",
+  "summary": "Turn a static site into a real application with a load-balanced app tier and a database.",
+  "narrative": "Your portfolio grew into a product. It has accounts, a dashboard, and data that changes — this is no longer a bundle of files a CDN can just cache. You need to compute responses and store state.\n\nThe canonical answer is the three-tier architecture: a load balancer spreads traffic across a fleet of stateless web servers, and those servers read and write a shared database. Done right, you can add servers to handle more users and survive the loss of any single one.\n\nBuild the classic pattern — client, load balancer, redundant app tier, and a database — and keep the client well away from the data tier. A cache in front of the database is the finishing touch.",
+  "objectives": ["Load balancing", "Stateless app tier", "Redundancy", "Data-tier isolation"],
+  "specs": {
+    "functional": [
+      "Handle dynamic, per-user requests",
+      "Persist application state in a database",
+      "Spread traffic across multiple app servers"
+    ],
+    "nonFunctional": [
+      "No single server failure takes the app offline",
+      "Reads stay fast under load"
+    ],
+    "constraints": [
+      "Clients enter through the load balancer only",
+      "Only the app tier may talk to the database"
+    ],
+    "budgetPerHr": 6.0,
+    "latencyTargetMs": 250,
+    "capacity": ["~1,000 requests/sec", "Millions of rows in the database"],
+    "tradeoff": "A stateless app tier trades local session convenience for the freedom to scale horizontally and fail over.",
+    "bonus": "Add a Cache in front of the database to absorb repeated reads."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client" },
+    { "id": "m2", "kind": "add", "componentId": "load-balancer", "label": "Add a Load Balancer" },
+    { "id": "m3", "kind": "add", "componentId": "web-server", "label": "Add a Web Server (app tier)" },
+    { "id": "m4", "kind": "add", "componentId": "sql-database", "label": "Add a SQL Database" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Send Client traffic to the Load Balancer" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance across the Web Server tier" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Let the app tier read/write the Database" },
+    { "id": "m8", "kind": "add", "componentId": "cache", "label": "Add a Cache", "bonus": true },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache hot reads from the app tier", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Traffic must enter through the Load Balancer, not straight to a Web Server."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients must never talk to the database directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Database access must go through the application tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers behind the Load Balancer so a single failure isn't an outage."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "cache", "monitoring"],
+  "hints": [
+    "The load balancer is the front door. Wire Client → Load Balancer → Web Server.",
+    "Add a second Web Server and connect the Load Balancer to both — that's how you kill the single point of failure.",
+    "Only the Web Server should reach the SQL Database. A Cache between them soaks up repeated reads."
+  ]
+}

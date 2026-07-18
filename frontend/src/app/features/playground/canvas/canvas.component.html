@@ -1,0 +1,88 @@
+<f-flow
+  fDraggable
+  [fDraggableDisabled]="locked()"
+  (fCreateNode)="onCreateNode($event)"
+  (fCreateConnection)="onCreateConnection($event)"
+  (fMoveNodes)="onMoveNodes($event)"
+  (fSelectionChange)="onSelectionChange($event)"
+  (fDragStarted)="onDragStarted($event)"
+  (fDragEnded)="onDragEnded()"
+  (contextmenu)="onCanvasContextMenu($event)"
+>
+  <f-canvas fZoom [fZoomMinimum]="0.25" [fZoomMaximum]="2.5">
+    <f-background>
+      <f-circle-pattern [color]="dotColor()" [radius]="1.4" />
+    </f-background>
+
+    @for (node of nodes(); track node.id) {
+      <!-- fDragHandle is required: since @foblex/flow v19 a node only drags when the
+           pointerdown lands inside an .f-drag-handle element; fNode alone never moves. -->
+      <div
+        fNode
+        fDragHandle
+        [fNodeId]="node.id"
+        [attr.data-node-id]="node.id"
+        [fNodePosition]="nodePositions().get(node.id)!"
+        [fNodeDraggingDisabled]="locked()"
+        class="node-host"
+        [class.selected]="isNodeSelected(node.id)"
+        [class.shake]="shakeNodeId() === node.id"
+        (contextmenu)="onItemContextMenu($event, node.id)"
+      >
+        <app-design-node
+          [node]="node"
+          [component]="store.component(node.componentId)"
+          (rename)="store.renameNode(node.id, $event)"
+          (noteChange)="store.setNodeNote(node.id, $event)"
+        />
+      </div>
+    }
+
+    @for (note of stickyNotes(); track note.id) {
+      <div
+        fNode
+        fDragHandle
+        [fNodeId]="note.id"
+        [attr.data-node-id]="note.id"
+        [fNodePosition]="stickyPositions().get(note.id)!"
+        [fNodeDraggingDisabled]="locked()"
+        class="node-host"
+        [class.selected]="isNodeSelected(note.id)"
+        (contextmenu)="onItemContextMenu($event, note.id)"
+      >
+        <app-sticky-note [note]="note" (textChange)="store.updateStickyNote(note.id, $event)" />
+      </div>
+    }
+
+    @for (edge of edges(); track edge.id) {
+      <f-connection
+        [fConnectionId]="edge.id"
+        [fSourceId]="edge.sourceNodeId + '__out'"
+        [fTargetId]="edge.targetNodeId + '__in'"
+        fType="segment"
+      />
+    }
+
+    <!-- Required for drag-to-connect: FCreateConnectionSession.begin() refuses to
+         start when no f-connection-for-create is rendered. -->
+    <f-connection-for-create />
+  </f-canvas>
+
+  <!-- Overview minimap, bottom-right (T067). -->
+  <f-minimap class="minimap" [fNodeRenderLimit]="120" />
+</f-flow>
+
+<!-- Visual-only alignment guides while dragging (US5). Rendered OUTSIDE <f-flow> because
+     f-canvas projects only fNode/fConnection children; the host feeds canvas-space guides plus the
+     live canvas→screen transform. Never snaps positions (research R3, FR-021). -->
+<app-alignment-guides [guides]="guides()" [transform]="guideTransform()" />
+
+<!-- Right-click context menu (US4). Anchored at the click point via CDK overlay; the canvas
+     routes each chosen action to the same store/flow calls as the keyboard shortcuts. -->
+<app-canvas-context-menu
+  [open]="ctxOpen()"
+  [anchor]="ctxAnchor()"
+  [zone]="ctxZone()"
+  (action)="onContextAction($event)"
+  (closed)="closeContextMenu()"
+/>

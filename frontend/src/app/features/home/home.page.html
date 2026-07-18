@@ -1,0 +1,50 @@
+<section class="home">
+  <header class="hero">
+    <h1>System Design Playground</h1>
+    <p class="tagline">Learn system design by building it. Drag components, wire the flow, press RUN.</p>
+  </header>
+
+  <div class="grid">
+    <!-- Architecture Lab progress -->
+    <section class="card shadow-soft lab-card">
+      <div class="lab-head">
+        <h2>Architecture Lab</h2>
+        @if (lab(); as l) {
+          <span class="count">{{ l.completed }}/{{ l.levels }} completed</span>
+        }
+      </div>
+      @if (lab(); as l) {
+        <app-progress-bar [value]="l.percent" />
+        <p class="percent">{{ l.percent }}% complete</p>
+      }
+      <a class="btn primary" routerLink="/lab">Enter Lab →</a>
+    </section>
+
+    <!-- Continue where you left off -->
+    @if (continueCard(); as c) {
+      <a class="card shadow-soft action-card continue" [routerLink]="['/playground', c.levelId]">
+        <span class="eyebrow">Continue where you left off</span>
+        <h3>{{ c.title }}</h3>
+        <span class="meta">Edited {{ relativeTime(c.updatedAt) }}</span>
+        <span class="cta">Resume →</span>
+      </a>
+    }
+
+    <!-- Recommended next -->
+    @if (recommended(); as r) {
+      <a class="card shadow-soft action-card recommended" [routerLink]="['/playground', r.levelId]">
+        <span class="eyebrow">Recommended next</span>
+        <h3>{{ r.title }}</h3>
+        <span class="cta">Start →</span>
+      </a>
+    }
+
+    <!-- Sandbox -->
+    <a class="card shadow-soft action-card sandbox" routerLink="/sandbox">
+      <span class="eyebrow">Free-form</span>
+      <h3>Sandbox</h3>
+      <span class="meta">No missions, no scoring. Just build.</span>
+      <span class="cta">Open →</span>
+    </a>
+  </div>
+</section>

@@ -1,0 +1,135 @@
+:host {
+  display: block;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+.lab-header {
+  margin-bottom: 24px;
+}
+
+.overall {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  margin-top: 10px;
+}
+
+.overall app-progress-bar {
+  flex: 1;
+}
+
+.overall-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 220px;
+  padding: 9px 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.difficulty-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diff-chip {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  cursor: pointer;
+
+  &.active[data-difficulty='easy'] {
+    background: var(--difficulty-easy);
+    border-color: var(--difficulty-easy);
+    color: #fff;
+  }
+  &.active[data-difficulty='medium'] {
+    background: var(--difficulty-medium);
+    border-color: var(--difficulty-medium);
+    color: #fff;
+  }
+  &.active[data-difficulty='hard'] {
+    background: var(--difficulty-hard);
+    border-color: var(--difficulty-hard);
+    color: #fff;
+  }
+  &.active[data-difficulty='expert'] {
+    background: var(--difficulty-expert);
+    border-color: var(--difficulty-expert);
+    color: #fff;
+  }
+  &.active[data-difficulty='legendary'] {
+    background: var(--difficulty-legendary);
+    border-color: var(--difficulty-legendary);
+    color: #fff;
+  }
+}
+
+.empty-state {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.act {
+  margin-bottom: 32px;
+}
+
+.act-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.act-header h2 {
+  margin: 0;
+}
+
+.act-progress {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.act-description {
+  margin: 4px 0 16px;
+  color: var(--text-secondary);
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.loading {
+  padding: 48px;
+  text-align: center;
+  color: var(--text-muted);
+}

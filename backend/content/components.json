@@ -1,0 +1,428 @@
+[
+  {
+    "id": "client",
+    "name": "Client",
+    "tech": "Browser / Mobile App",
+    "category": "user",
+    "description": "The end user's device that originates every request. All data flows begin here.",
+    "costPerHr": 0,
+    "latencyMs": 0,
+    "icon": "tile-client"
+  },
+
+  {
+    "id": "dns",
+    "name": "DNS",
+    "tech": "Route 53 / Cloudflare",
+    "category": "networking",
+    "description": "Resolves human-readable domain names to server IP addresses so clients can find your services.",
+    "costPerHr": 0.05,
+    "latencyMs": 20,
+    "icon": "aws-route-53"
+  },
+  {
+    "id": "cdn",
+    "name": "CDN",
+    "tech": "CloudFront / Fastly",
+    "category": "networking",
+    "description": "Caches static assets at edge locations near users, cutting latency and offloading origin servers.",
+    "costPerHr": 0.2,
+    "latencyMs": 15,
+    "icon": "aws-cloudfront"
+  },
+  {
+    "id": "load-balancer",
+    "name": "Load Balancer",
+    "tech": "HAProxy / AWS ALB",
+    "category": "networking",
+    "description": "Distributes incoming traffic across a pool of servers, enabling horizontal scale and failover.",
+    "costPerHr": 0.3,
+    "latencyMs": 5,
+    "icon": "aws-elastic-load-balancing"
+  },
+  {
+    "id": "api-gateway",
+    "name": "API Gateway",
+    "tech": "Kong / AWS API Gateway",
+    "category": "networking",
+    "description": "Single entry point for APIs that handles routing, auth, throttling, and request shaping.",
+    "costPerHr": 0.35,
+    "latencyMs": 10,
+    "icon": "aws-api-gateway"
+  },
+  {
+    "id": "rate-limiter",
+    "name": "Rate Limiter",
+    "tech": "Redis token-bucket",
+    "category": "networking",
+    "description": "Caps how many requests a client can make in a window to protect downstream services from abuse.",
+    "costPerHr": 0.15,
+    "latencyMs": 3,
+    "icon": "tile-rate-limiter"
+  },
+  {
+    "id": "reverse-proxy",
+    "name": "Reverse Proxy",
+    "tech": "Nginx",
+    "category": "networking",
+    "description": "Terminates connections, serves TLS, and forwards requests to backend servers.",
+    "costPerHr": 0.1,
+    "latencyMs": 4,
+    "icon": "tile-reverse-proxy"
+  },
+  {
+    "id": "prompt-router",
+    "name": "Prompt Router",
+    "tech": "LiteLLM / custom",
+    "category": "networking",
+    "description": "Routes AI prompts to the right model or provider based on cost, latency, or capability.",
+    "costPerHr": 0.25,
+    "latencyMs": 8,
+    "icon": "tile-prompt-router"
+  },
+  {
+    "id": "waf",
+    "name": "Web Application Firewall",
+    "tech": "AWS WAF / Cloudflare",
+    "category": "networking",
+    "description": "Filters and blocks malicious HTTP traffic (injection, bots) before it reaches your application.",
+    "costPerHr": 0.2,
+    "latencyMs": 6,
+    "icon": "aws-waf"
+  },
+
+  {
+    "id": "web-server",
+    "name": "Web Server",
+    "tech": "Node / Nginx",
+    "category": "compute",
+    "description": "Stateless application server that handles HTTP requests and runs business logic.",
+    "costPerHr": 0.4,
+    "latencyMs": 25,
+    "icon": "aws-ec2"
+  },
+  {
+    "id": "websocket-server",
+    "name": "WebSocket Server",
+    "tech": "Socket.IO / ws",
+    "category": "compute",
+    "description": "Maintains long-lived bidirectional connections for real-time push to clients.",
+    "costPerHr": 0.45,
+    "latencyMs": 15,
+    "icon": "tile-websocket-server"
+  },
+  {
+    "id": "worker",
+    "name": "Worker",
+    "tech": "Celery / BullMQ",
+    "category": "compute",
+    "description": "Background process that consumes jobs from a queue and performs asynchronous work.",
+    "costPerHr": 0.35,
+    "latencyMs": 50,
+    "icon": "aws-lambda"
+  },
+  {
+    "id": "stream-processor",
+    "name": "Stream Processor",
+    "tech": "Flink / Kafka Streams",
+    "category": "compute",
+    "description": "Processes unbounded event streams in near real time for aggregation and enrichment.",
+    "costPerHr": 0.6,
+    "latencyMs": 40,
+    "icon": "aws-managed-flink"
+  },
+  {
+    "id": "task-scheduler",
+    "name": "Task Scheduler",
+    "tech": "Cron / Airflow",
+    "category": "compute",
+    "description": "Triggers jobs on a schedule or dependency graph for periodic and batch workloads.",
+    "costPerHr": 0.2,
+    "latencyMs": 30,
+    "icon": "aws-mwaa"
+  },
+  {
+    "id": "embedding-service",
+    "name": "Embedding Service",
+    "tech": "sentence-transformers",
+    "category": "compute",
+    "description": "Converts text or media into dense vectors for semantic search and retrieval.",
+    "costPerHr": 0.7,
+    "latencyMs": 60,
+    "icon": "aws-sagemaker-ai"
+  },
+  {
+    "id": "llm-inference",
+    "name": "LLM Inference",
+    "tech": "vLLM / TGI",
+    "category": "compute",
+    "description": "Serves large-language-model generations. GPU-heavy and the dominant cost/latency in AI systems.",
+    "costPerHr": 2.5,
+    "latencyMs": 800,
+    "icon": "aws-bedrock"
+  },
+  {
+    "id": "chunking-service",
+    "name": "Chunking Service",
+    "tech": "LangChain splitters",
+    "category": "compute",
+    "description": "Splits documents into overlapping chunks sized for embedding and retrieval.",
+    "costPerHr": 0.3,
+    "latencyMs": 35,
+    "icon": "tile-chunking-service"
+  },
+  {
+    "id": "reranker",
+    "name": "Reranker",
+    "tech": "Cohere Rerank / cross-encoder",
+    "category": "compute",
+    "description": "Reorders retrieved candidates by relevance to sharpen results before they hit the LLM.",
+    "costPerHr": 0.55,
+    "latencyMs": 70,
+    "icon": "tile-reranker"
+  },
+
+  {
+    "id": "sql-database",
+    "name": "SQL Database",
+    "tech": "PostgreSQL",
+    "category": "storage",
+    "description": "Relational store with ACID transactions and joins for structured, consistent data.",
+    "costPerHr": 0.5,
+    "latencyMs": 20,
+    "icon": "aws-rds"
+  },
+  {
+    "id": "nosql-database",
+    "name": "NoSQL Database",
+    "tech": "Cassandra",
+    "category": "storage",
+    "description": "Horizontally scalable wide-column store for high write throughput and flexible schemas.",
+    "costPerHr": 0.55,
+    "latencyMs": 15,
+    "icon": "aws-dynamodb"
+  },
+  {
+    "id": "blob-storage",
+    "name": "Blob Storage",
+    "tech": "Amazon S3",
+    "category": "storage",
+    "description": "Durable, cheap object storage for large unstructured files like images and video.",
+    "costPerHr": 0.1,
+    "latencyMs": 40,
+    "icon": "aws-s3"
+  },
+  {
+    "id": "search-index",
+    "name": "Search Index",
+    "tech": "Elasticsearch",
+    "category": "storage",
+    "description": "Inverted-index engine for full-text search, faceting, and relevance ranking.",
+    "costPerHr": 0.65,
+    "latencyMs": 30,
+    "icon": "aws-opensearch"
+  },
+  {
+    "id": "timeseries-db",
+    "name": "Time-Series DB",
+    "tech": "InfluxDB",
+    "category": "storage",
+    "description": "Optimized for append-heavy timestamped metrics and fast range queries.",
+    "costPerHr": 0.45,
+    "latencyMs": 18,
+    "icon": "aws-timestream"
+  },
+  {
+    "id": "graph-database",
+    "name": "Graph Database",
+    "tech": "Neo4j",
+    "category": "storage",
+    "description": "Stores nodes and relationships for traversals like social graphs and recommendations.",
+    "costPerHr": 0.6,
+    "latencyMs": 25,
+    "icon": "aws-neptune"
+  },
+  {
+    "id": "data-warehouse",
+    "name": "Data Warehouse",
+    "tech": "Snowflake",
+    "category": "storage",
+    "description": "Columnar analytics store for large-scale OLAP queries and reporting over historical data.",
+    "costPerHr": 1.2,
+    "latencyMs": 200,
+    "icon": "aws-redshift"
+  },
+  {
+    "id": "vector-database",
+    "name": "Vector Database",
+    "tech": "Pinecone / pgvector",
+    "category": "storage",
+    "description": "Indexes embeddings for approximate nearest-neighbor semantic search in RAG pipelines.",
+    "costPerHr": 0.8,
+    "latencyMs": 45,
+    "icon": "tile-vector-database"
+  },
+  {
+    "id": "context-store",
+    "name": "Context Store",
+    "tech": "Redis / DynamoDB",
+    "category": "storage",
+    "description": "Holds conversation history and session context for stateful AI and chat applications.",
+    "costPerHr": 0.4,
+    "latencyMs": 10,
+    "icon": "tile-context-store"
+  },
+
+  {
+    "id": "cache",
+    "name": "Cache",
+    "tech": "Redis",
+    "category": "caching",
+    "description": "In-memory key-value store that serves hot reads in microseconds and shields the database.",
+    "costPerHr": 0.3,
+    "latencyMs": 2,
+    "icon": "aws-elasticache"
+  },
+  {
+    "id": "bloom-filter",
+    "name": "Bloom Filter",
+    "tech": "RedisBloom",
+    "category": "caching",
+    "description": "Probabilistic membership test that avoids expensive lookups for keys that don't exist.",
+    "costPerHr": 0.1,
+    "latencyMs": 1,
+    "icon": "tile-bloom-filter"
+  },
+
+  {
+    "id": "message-queue",
+    "name": "Message Queue",
+    "tech": "Kafka / SQS",
+    "category": "messaging",
+    "description": "Durable buffer that decouples producers from consumers and absorbs traffic spikes.",
+    "costPerHr": 0.5,
+    "latencyMs": 12,
+    "icon": "aws-sqs"
+  },
+  {
+    "id": "pub-sub",
+    "name": "Pub/Sub",
+    "tech": "SNS / Google Pub/Sub",
+    "category": "messaging",
+    "description": "Fan-out messaging that broadcasts an event to many independent subscribers.",
+    "costPerHr": 0.3,
+    "latencyMs": 10,
+    "icon": "aws-sns"
+  },
+  {
+    "id": "dead-letter-queue",
+    "name": "Dead Letter Queue",
+    "tech": "SQS DLQ",
+    "category": "messaging",
+    "description": "Captures messages that repeatedly fail processing so they can be inspected and replayed.",
+    "costPerHr": 0.1,
+    "latencyMs": 8,
+    "icon": "tile-dead-letter-queue"
+  },
+
+  {
+    "id": "notification-service",
+    "name": "Notification Service",
+    "tech": "FCM / APNs / Twilio",
+    "category": "services",
+    "description": "Delivers push, SMS, and email notifications to users across channels.",
+    "costPerHr": 0.35,
+    "latencyMs": 100,
+    "icon": "tile-notification-service"
+  },
+  {
+    "id": "payment-service",
+    "name": "Payment Service",
+    "tech": "Stripe",
+    "category": "services",
+    "description": "Handles charges, subscriptions, and payouts via a third-party payment provider.",
+    "costPerHr": 0.4,
+    "latencyMs": 250,
+    "icon": "tile-payment-service"
+  },
+  {
+    "id": "zookeeper-etcd",
+    "name": "ZooKeeper / etcd",
+    "tech": "ZooKeeper / etcd",
+    "category": "services",
+    "description": "Distributed coordination store for leader election, config, and cluster membership.",
+    "costPerHr": 0.45,
+    "latencyMs": 15,
+    "icon": "tile-zookeeper-etcd"
+  },
+  {
+    "id": "monitoring",
+    "name": "Monitoring & Alerting",
+    "tech": "Prometheus / Grafana",
+    "category": "services",
+    "description": "Collects metrics, visualizes dashboards, and fires alerts when systems misbehave.",
+    "costPerHr": 0.3,
+    "latencyMs": 50,
+    "icon": "aws-cloudwatch"
+  },
+  {
+    "id": "service-registry",
+    "name": "Service Registry",
+    "tech": "Consul",
+    "category": "services",
+    "description": "Tracks healthy service instances so callers can discover and route to them dynamically.",
+    "costPerHr": 0.25,
+    "latencyMs": 10,
+    "icon": "aws-cloud-map"
+  },
+  {
+    "id": "circuit-breaker",
+    "name": "Circuit Breaker",
+    "tech": "Resilience4j / Hystrix",
+    "category": "services",
+    "description": "Stops calling a failing dependency to prevent cascading failures and give it time to recover.",
+    "costPerHr": 0.05,
+    "latencyMs": 2,
+    "icon": "tile-circuit-breaker"
+  },
+  {
+    "id": "log-aggregator",
+    "name": "Log Aggregator",
+    "tech": "ELK / Loki",
+    "category": "services",
+    "description": "Centralizes logs from every service for search, correlation, and debugging.",
+    "costPerHr": 0.4,
+    "latencyMs": 60,
+    "icon": "tile-log-aggregator"
+  },
+  {
+    "id": "guardrail-service",
+    "name": "Guardrail Service",
+    "tech": "NeMo Guardrails / Llama Guard",
+    "category": "services",
+    "description": "Screens LLM inputs and outputs for unsafe, off-policy, or injected content.",
+    "costPerHr": 0.5,
+    "latencyMs": 120,
+    "icon": "tile-guardrail-service"
+  },
+  {
+    "id": "llm-observability",
+    "name": "LLM Observability",
+    "tech": "LangSmith / Helicone",
+    "category": "services",
+    "description": "Traces prompts, tokens, cost, and quality across AI pipelines for debugging and evaluation.",
+    "costPerHr": 0.3,
+    "latencyMs": 40,
+    "icon": "tile-llm-observability"
+  },
+  {
+    "id": "model-registry",
+    "name": "Model Registry",
+    "tech": "MLflow",
+    "category": "services",
+    "description": "Versions, stages, and serves ML models so deployments are reproducible and auditable.",
+    "costPerHr": 0.2,
+    "latencyMs": 30,
+    "icon": "tile-model-registry"
+  }
+]

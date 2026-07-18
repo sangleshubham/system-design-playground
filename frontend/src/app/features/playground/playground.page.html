@@ -1,0 +1,93 @@
+@switch (status()) {
+  @case ('loading') {
+    <div class="state-screen"><p>Loading level…</p></div>
+  }
+  @case ('locked') {
+    <div class="state-screen">
+      <h2>🔒 Level locked</h2>
+      <p>{{ lockedMessage() }}</p>
+      <a class="btn" routerLink="/lab">← Back to Lab</a>
+    </div>
+  }
+  @case ('notfound') {
+    <div class="state-screen">
+      <h2>Level not found</h2>
+      <p>We couldn't find that level.</p>
+      <a class="btn" routerLink="/lab">← Back to Lab</a>
+    </div>
+  }
+  @case ('error') {
+    <div class="state-screen">
+      <h2>Something went wrong</h2>
+      <p>The level failed to load. Please try again.</p>
+      <a class="btn" routerLink="/lab">← Back to Lab</a>
+    </div>
+  }
+  @case ('ready') {
+    <div class="playground" [class.palette-open]="paletteOpen()" [class.context-open]="contextOpen()">
+      <header class="pg-topbar">
+        <a class="back" routerLink="/lab"><app-icon name="back" /> Back to Lab</a>
+        <button type="button" class="drawer-toggle" (click)="togglePalette()">Palette</button>
+        <div class="title">
+          <span class="lvl">Level {{ store.level()?.order }}:</span>
+          <span class="name">{{ store.level()?.title }}</span>
+          @if (store.level(); as lvl) {
+            <app-difficulty-badge [difficulty]="lvl.difficulty" />
+          }
+        </div>
+        <button type="button" class="drawer-toggle" (click)="toggleContext()">Brief</button>
+        @if (saveStatus() !== 'idle') {
+          <span class="save-indicator" [class.is-saving]="saveStatus() === 'saving'">
+            {{ saveStatus() === 'saving' ? 'Saving…' : 'Saved ✓' }}
+          </span>
+        }
+        <button type="button" class="run" (click)="run()" [disabled]="running()">
+          @if (running()) {
+            <span class="spinner"></span> Running…
+          } @else {
+            <app-icon name="play" /> RUN
+          }
+        </button>
+      </header>
+
+      <div class="pg-body">
+        <aside class="pg-palette"><app-palette /></aside>
+
+        <section class="pg-canvas-area" #canvasArea>
+          <app-cost-indicator class="cost-overlay" />
+          <app-canvas #canvas />
+          <app-canvas-controls [canvas]="canvas" [fullscreenTarget]="canvasArea" />
+        </section>
+
+        <aside class="pg-context">
+          <app-context-panel [aiAvailable]="aiAvailable()" (aiReview)="openAiReview()" />
+        </aside>
+
+        <!-- Scrim behind an open drawer on narrow viewports (T054). -->
+        <button type="button" class="drawer-scrim" (click)="closeDrawers()" aria-label="Close panel"></button>
+      </div>
+    </div>
+
+    @if (result(); as res) {
+      <app-results-dialog
+        [result]="res"
+        [best]="best()"
+        [nodeCount]="store.nodes().length"
+        [edgeCount]="store.edges().length"
+        [costPerHr]="currentCost()"
+        (dismiss)="closeResult()"
+        (next)="goToLevel($event)"
+      />
+    }
+
+    @if (aiReviewOpen() && store.level(); as lvl) {
+      @defer (on immediate) {
+        <app-ai-review-panel
+          [levelId]="lvl.id"
+          [canvasEmpty]="store.nodes().length === 0"
+          (closed)="aiReviewOpen.set(false)"
+        />
+      }
+    }
+  }
+}

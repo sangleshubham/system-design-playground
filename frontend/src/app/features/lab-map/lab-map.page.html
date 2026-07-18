@@ -1,0 +1,58 @@
+@if (map(); as m) {
+  <header class="lab-header">
+    <h1>Architecture Lab</h1>
+    <div class="overall card shadow-soft">
+      <app-progress-bar [value]="overallPercent()" />
+      <span class="overall-label">
+        {{ m.totals.completed }}/{{ m.totals.levels }} completed &middot;
+        {{ m.totals.unlockedThroughOrder }} unlocked
+      </span>
+    </div>
+  </header>
+
+  <div class="filters">
+    <input
+      class="search-input"
+      type="search"
+      placeholder="Search by title, summary, or objective…"
+      [value]="search()"
+      (input)="setSearch($any($event.target).value)"
+    />
+    <div class="difficulty-chips">
+      @for (d of difficulties; track d) {
+        <button
+          type="button"
+          class="diff-chip"
+          [attr.data-difficulty]="d"
+          [class.active]="isActiveDifficulty(d)"
+          (click)="toggleDifficulty(d)"
+        >
+          {{ d }}
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (!hasResults()) {
+    <p class="empty-state">No levels match your search or filters.</p>
+  } @else {
+    @for (act of filteredActs(); track act.id) {
+      @if (act.levels.length > 0) {
+        <section class="act">
+          <div class="act-header">
+            <h2>{{ act.title }}</h2>
+            <span class="act-progress">{{ act.completedCount }}/{{ act.levelCount }}</span>
+          </div>
+          <p class="act-description">{{ act.description }}</p>
+          <div class="cards-grid">
+            @for (level of act.levels; track level.id) {
+              <app-level-card [card]="level" />
+            }
+          </div>
+        </section>
+      }
+    }
+  }
+} @else {
+  <p class="loading">Loading the lab…</p>
+}

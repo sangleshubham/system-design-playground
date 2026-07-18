@@ -1,0 +1,68 @@
+<section class="sandbox-list">
+  <header class="head">
+    <div>
+      <h1>Sandbox</h1>
+      <p class="tagline">Free-form designs — the full catalog, no missions, no scoring.</p>
+    </div>
+    @if (!creating()) {
+      <button type="button" class="btn primary" (click)="startCreate()">
+        <app-icon name="plus" /> New design
+      </button>
+    }
+  </header>
+
+  @if (creating()) {
+    <div class="create-row card shadow-soft">
+      <input
+        #nameInput
+        class="create-input"
+        placeholder="Design name…"
+        (keydown.enter)="create(nameInput.value)"
+        (keydown.escape)="cancelCreate()"
+      />
+      <button type="button" class="btn primary" (click)="create(nameInput.value)">Create</button>
+      <button type="button" class="btn ghost" (click)="cancelCreate()">Cancel</button>
+    </div>
+  }
+
+  @if (loaded() && designs().length === 0 && !creating()) {
+    <div class="empty">
+      <p>No designs yet. Create one to start building freely.</p>
+    </div>
+  }
+
+  <div class="grid">
+    @for (design of designs(); track design.id) {
+      <div class="card shadow-soft design-card">
+        @if (editingId() === design.id) {
+          <input
+            #renameInput
+            class="rename-input"
+            [value]="design.name ?? ''"
+            (blur)="commitRename(design.id, renameInput.value)"
+            (keydown.enter)="commitRename(design.id, renameInput.value)"
+            (keydown.escape)="editingId.set(null)"
+          />
+        } @else {
+          <button type="button" class="open-area" (click)="open(design.id)">
+            <h3 class="name">{{ design.name ?? 'Untitled design' }}</h3>
+            <div class="meta">
+              <span>{{ design.nodeCount }} node{{ design.nodeCount === 1 ? '' : 's' }}</span>
+              <span>·</span>
+              <span>{{ relativeTime(design.updatedAt) }}</span>
+            </div>
+          </button>
+        }
+
+        <div class="actions">
+          <button type="button" class="icon-btn" (click)="startRename(design.id)" title="Rename">
+            Rename
+          </button>
+          <button type="button" class="icon-btn danger" (click)="remove(design)" title="Delete">
+            <app-icon name="trash" /> Delete
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+</section>
