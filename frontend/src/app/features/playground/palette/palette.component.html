@@ -17,7 +17,16 @@
 </div>
 
 <!-- Sticky note item -->
-<div class="sticky-item" fExternalItem [fData]="{ note: true }" fExternalItemId="sticky-note">
+<!-- Inline display:flex is required: @foblex/flow's external-item drag handler captures the host's
+     *inline* display on drag start and restores it as `display || 'block'` on drop. Without an inline
+     value it rewrites the card to `display: block` after a drop, collapsing the flex layout. -->
+<div
+  class="sticky-item"
+  style="display: flex"
+  fExternalItem
+  [fData]="{ note: true }"
+  fExternalItemId="sticky-note"
+>
   <app-icon name="note" />
   <span>Drag to add a note</span>
 </div>
@@ -30,6 +39,7 @@
         @for (c of group.items; track c.id) {
           <div
             class="pal-card"
+            style="display: flex"
             fExternalItem
             [fData]="{ componentId: c.id }"
             [fExternalItemId]="c.id"
