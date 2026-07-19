@@ -210,4 +210,111 @@ describe('CanvasComponent', () => {
       expect(cmp.ctxZone()).toBe('selection');
     });
   });
+
+  // US2 (Phase 4): fitToView() is the single choke point every fit path funnels through
+  // (toolbar Fit, Mod+0, post-tidy). It must cap zoom-in at 100% — fitToScreen alone bypasses
+  // the interactive clamp and balloons small/single-node diagrams (contract C3, research R2).
+  // fitToScreen DEFERS the transform mutation (afterNextRender), so getScale() is stale right
+  // after the call; the clamp runs in onCanvasTransformChange() once the fit has applied.
+  describe('fitToView zoom clamp (US2)', () => {
+    type CanvasStub = {
+      fitToScreen: ReturnType<typeof vi.fn>;
+      getScale: ReturnType<typeof vi.fn>;
+      resetScaleAndCenter: ReturnType<typeof vi.fn>;
+    };
+
+    // Replace the private FCanvasComponent viewChild with a stub so we control getScale().
+    function stubCanvas(cmp: CanvasComponent, scale: number): CanvasStub {
+      const stub: CanvasStub = {
+        fitToScreen: vi.fn(),
+        getScale: vi.fn(() => scale),
+        resetScaleAndCenter: vi.fn(),
+      };
+      (cmp as unknown as { canvasCmp: () => CanvasStub }).canvasCmp = () => stub;
+      return stub;
+    }
+
+    it('fits with 48px padding (animated) and does NOT clamp synchronously — getScale is stale', () => {
+      const fixture = TestBed.createComponent(CanvasComponent);
+      fixture.detectChanges();
+      const stub = stubCanvas(fixture.componentInstance, 2.5);
+      fixture.componentInstance.fitToView();
+      expect(stub.fitToScreen).toHaveBeenCalledWith({ x: 48, y: 48 }, true);
+      // Clamping here would read the pre-fit scale — the whole bug. It must wait for the change.
+      expect(stub.resetScaleAndCenter).not.toHaveBeenCalled();
+    });
+
+    it('clamps to 100% on the post-fit transform change when the fit scale exceeds 1', () => {
+      const fixture = TestBed.createComponent(CanvasComponent);
+      fixture.detectChanges();
+      const cmp = fixture.componentInstance;
+      const stub = stubCanvas(cmp, 2.5);
+      cmp.fitToView();
+      cmp.onCanvasTransformChange();
+      expect(stub.resetScaleAndCenter).toHaveBeenCalledWith(true);
+    });
+
+    it('clamps when the post-fit scale is non-finite (degenerate box)', () => {
+      const fixture = TestBed.createComponent(CanvasComponent);
+      fixture.detectChanges();
+      const cmp = fixture.componentInstance;
+
+      const nan = stubCanvas(cmp, NaN);
+      cmp.fitToView();
+      cmp.onCanvasTransformChange();
+      expect(nan.resetScaleAndCenter).toHaveBeenCalledWith(true);
+
+      const inf = stubCanvas(cmp, Infinity);
+      cmp.fitToView();
+      cmp.onCanvasTransformChange();
+      expect(inf.resetScaleAndCenter).toHaveBeenCalledWith(true);
+    });
+
+    it('does NOT clamp when the post-fit scale is <= 1 (large diagram keeps zoom-out)', () => {
+      const fixture = TestBed.createComponent(CanvasComponent);
+      fixture.detectChanges();
+      const cmp = fixture.componentInstance;
+
+      const small = stubCanvas(cmp, 0.5);
+      cmp.fitToView();
+      cmp.onCanvasTransformChange();
+      expect(small.resetScaleAndCenter).not.toHaveBeenCalled();
+
+      const exact = stubCanvas(cmp, 1);
+      cmp.fitToView();
+      cmp.onCanvasTransformChange();
+      expect(exact.resetScaleAndCenter).not.toHaveBeenCalled();
+    });
+
+    it('ignores transform changes not caused by a fit (manual zoom stays 25%–250%)', () => {
+      const fixture = TestBed.createComponent(CanvasComponent);
+      fixture.detectChanges();
+      const cmp = fixture.componentInstance;
+      const stub = stubCanvas(cmp, 2.5); // e.g. the user manually zoomed to 250%
+      cmp.onCanvasTransformChange(); // no preceding fitToView() → flag not set → no clamp
+      expect(stub.resetScaleAndCenter).not.toHaveBeenCalled();
+    });
+
+    it('clamps only once per fit — a second transform change does not re-fire', () => {
+      const fixture = TestBed.createComponent(CanvasComponent);
+      fixture.detectChanges();
+      const cmp = fixture.componentInstance;
+      const stub = stubCanvas(cmp, 2.5);
+      cmp.fitToView();
+      cmp.onCanvasTransformChange(); // consumes the pending flag, clamps once
+      cmp.onCanvasTransformChange(); // flag cleared → no second clamp
+      expect(stub.resetScaleAndCenter).toHaveBeenCalledTimes(1);
+    });
+
+    it('empty canvas settles at 100% centered without an uncapped fitToScreen', () => {
+      store.hydrate(level, { ...seeded, nodes: [], edges: [] });
+      const fixture = TestBed.createComponent(CanvasComponent);
+      fixture.detectChanges();
+      const cmp = fixture.componentInstance;
+      const stub = stubCanvas(cmp, 5);
+      cmp.fitToView();
+      expect(stub.fitToScreen).not.toHaveBeenCalled();
+      expect(stub.resetScaleAndCenter).toHaveBeenCalledWith(true);
+    });
+  });
 });

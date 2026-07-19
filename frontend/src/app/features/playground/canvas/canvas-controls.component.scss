@@ -52,3 +52,15 @@
   background: var(--border-subtle);
   margin: 0 2px;
 }
+
+// Copy-my-key button (US5): icon + label pair; feedback states recolor without shifting layout.
+.toolbar button.copy-key {
+  gap: 6px;
+  font-size: 0.85rem;
+}
+.toolbar button.copy-key.copied {
+  color: var(--color-success);
+}
+.toolbar button.copy-key.error {
+  color: var(--color-danger);
+}

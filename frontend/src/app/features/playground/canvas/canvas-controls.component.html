@@ -51,6 +51,21 @@
   <button type="button" (click)="reset()" [disabled]="store.locked()" title="Reset canvas" aria-label="Reset canvas">
     Reset
   </button>
+  @if (keys.hasKey()) {
+    <span class="sep"></span>
+    <button
+      type="button"
+      class="copy-key"
+      [class.copied]="copyState() === 'copied'"
+      [class.error]="copyState() === 'error'"
+      (click)="copyKey()"
+      [title]="copyKeyLabel()"
+      aria-label="Copy my key"
+    >
+      <app-icon [name]="copyKeyIcon()" />
+      <span class="label">{{ copyKeyLabel() }}</span>
+    </button>
+  }
 </div>
 
 <div class="toolbar bottom">
@@ -60,7 +75,7 @@
   <button type="button" (click)="zoomIn()" title="Zoom in ({{ zoomInHint }})" aria-label="Zoom in">
     <app-icon name="zoom-in" />
   </button>
-  <button type="button" (click)="fit()" title="Fit to view ({{ fitHint }})" aria-label="Fit to view">
+  <button type="button" (click)="fit()" title="Fit to screen ({{ fitHint }})" aria-label="Fit to screen">
     <app-icon name="fit" />
   </button>
   <button
@@ -72,7 +87,7 @@
   >
     <app-icon name="lock-canvas" />
   </button>
-  <button type="button" (click)="toggleFullscreen()" title="Fullscreen" aria-label="Fullscreen">
-    <app-icon name="fullscreen" />
+  <button type="button" (click)="toggleFullscreen()" [title]="fullscreenLabel()" [attr.aria-label]="fullscreenLabel()">
+    <app-icon [name]="fullscreenIcon()" />
   </button>
 </div>

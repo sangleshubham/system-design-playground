@@ -69,7 +69,7 @@
   --radius-control: 8px;
 
   // Canvas
-  --canvas-bg: #f8fafc;
+  --canvas-bg: var(--surface-0); // single white drawable canvas in light theme (US4, FR-009)
   --canvas-dot: #cbd5e1;
 }
 

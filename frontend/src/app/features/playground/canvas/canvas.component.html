@@ -9,7 +9,7 @@
   (fDragEnded)="onDragEnded()"
   (contextmenu)="onCanvasContextMenu($event)"
 >
-  <f-canvas fZoom [fZoomMinimum]="0.25" [fZoomMaximum]="2.5">
+  <f-canvas fZoom [fZoomMinimum]="0.25" [fZoomMaximum]="2.5" (fCanvasChange)="onCanvasTransformChange()">
     <f-background>
       <f-circle-pattern [color]="dotColor()" [radius]="1.4" />
     </f-background>

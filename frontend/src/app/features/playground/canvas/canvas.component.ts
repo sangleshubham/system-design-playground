@@ -140,6 +140,9 @@ export class CanvasComponent {
   private cachedRects = new Map<string, GuideRect>();
   private guideRaf = 0;
   private guideFrameQueued = false;
+  // True between a fitToView() request and the transform-change that applies it — the window in
+  // which onCanvasTransformChange() clamps the fit result to ≤ 100% (US2).
+  private fitClampPending = false;
   private readonly onGuidePointerMove = (): void => this.queueGuideFrame();
 
   private readonly selectedNodeIds = computed(() => new Set(this.store.selection().nodes));
@@ -646,7 +649,38 @@ export class CanvasComponent {
     this.zoom()?.zoomOut();
   }
   fitToView(): void {
-    this.canvasCmp()?.fitToScreen({ x: 48, y: 48 }, true);
+    const canvas = this.canvasCmp();
+    if (!canvas) return;
+    // Empty/degenerate canvas: fitToScreen is a no-op (its bounding box is zero, so it never
+    // changes the transform and never fires fCanvasChange). Settle directly at 100% centered —
+    // a sane view, and no clamp flag is left dangling (US2 edge case, FR-004).
+    if (!this.hasAnyElements()) {
+      canvas.resetScaleAndCenter(true);
+      return;
+    }
+    // fitToScreen defers the transform mutation via afterNextRender, so getScale() is still the
+    // OLD scale synchronously after this call — a synchronous clamp here never sees the ballooned
+    // fit scale. Mark a pending clamp and finish it in onCanvasTransformChange(), which fires once
+    // the fit has actually applied (Foblex RedrawCanvasWithAnimation → emitCanvasChangeEvent).
+    this.fitClampPending = true;
+    canvas.fitToScreen({ x: 48, y: 48 }, true);
+  }
+
+  /**
+   * Post-fit clamp (US2, research R2, contract C3). fitToScreen bypasses the interactive
+   * [0.25, 2.5] zoom clamp and would balloon a small/single-node diagram far past 100%. Once the
+   * fit has applied and this transform-change fires, cap zoom-in at 100%: if the fit scale is > 1
+   * (or non-finite for a degenerate box) supersede it with resetScaleAndCenter (scale 1, centered).
+   * Only a fit we requested is clamped — manual zoom keeps its 25%–250% range; large diagrams
+   * (scale ≤ 1) keep today's padded zoom-out (FR-004/005/006).
+   */
+  onCanvasTransformChange(): void {
+    if (!this.fitClampPending) return;
+    this.fitClampPending = false;
+    const canvas = this.canvasCmp();
+    if (!canvas) return;
+    const s = canvas.getScale();
+    if (!Number.isFinite(s) || s > 1) canvas.resetScaleAndCenter(true);
   }
 
   private stripConnector(connectorId: string, suffix: string): string | null {

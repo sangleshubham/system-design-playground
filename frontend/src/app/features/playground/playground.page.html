@@ -57,6 +57,30 @@
           <app-cost-indicator class="cost-overlay" />
           <app-canvas #canvas />
           <app-canvas-controls [canvas]="canvas" [fullscreenTarget]="canvasArea" />
+
+          <!-- Popups live INSIDE #canvasArea (the fullscreen target) so they paint on top of
+               the fullscreen canvas; single-@if driven, so exactly one instance ever exists (US1). -->
+          @if (result(); as res) {
+            <app-results-dialog
+              [result]="res"
+              [best]="best()"
+              [nodeCount]="store.nodes().length"
+              [edgeCount]="store.edges().length"
+              [costPerHr]="currentCost()"
+              (dismiss)="closeResult()"
+              (next)="goToLevel($event)"
+            />
+          }
+
+          @if (aiReviewOpen() && store.level(); as lvl) {
+            @defer (on immediate) {
+              <app-ai-review-panel
+                [levelId]="lvl.id"
+                [canvasEmpty]="store.nodes().length === 0"
+                (closed)="aiReviewOpen.set(false)"
+              />
+            }
+          }
         </section>
 
         <aside class="pg-context">
@@ -67,27 +91,5 @@
         <button type="button" class="drawer-scrim" (click)="closeDrawers()" aria-label="Close panel"></button>
       </div>
     </div>
-
-    @if (result(); as res) {
-      <app-results-dialog
-        [result]="res"
-        [best]="best()"
-        [nodeCount]="store.nodes().length"
-        [edgeCount]="store.edges().length"
-        [costPerHr]="currentCost()"
-        (dismiss)="closeResult()"
-        (next)="goToLevel($event)"
-      />
-    }
-
-    @if (aiReviewOpen() && store.level(); as lvl) {
-      @defer (on immediate) {
-        <app-ai-review-panel
-          [levelId]="lvl.id"
-          [canvasEmpty]="store.nodes().length === 0"
-          (closed)="aiReviewOpen.set(false)"
-        />
-      }
-    }
   }
 }
