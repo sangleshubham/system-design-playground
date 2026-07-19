@@ -47,9 +47,9 @@ export interface ReviewResult {
 }
 
 export interface AiReviewService {
-  review(level: Level, opts?: ReviewOptions): Promise<ReviewResult>;
+  review(workspaceId: string, level: Level, opts?: ReviewOptions): Promise<ReviewResult>;
   /** Latest stored review for the level's CURRENT saved design (GET endpoint; no upstream). */
-  getStored(level: Level): AiReviewGetResponse;
+  getStored(workspaceId: string, level: Level): AiReviewGetResponse;
 }
 
 export interface AiReviewServiceDeps {
@@ -92,18 +92,20 @@ function parsePayload(content: string): ParseOutcome {
 
 export function createAiReviewService(deps: AiReviewServiceDeps): AiReviewService {
   const { config, client, designs, reviews, componentsById } = deps;
-  // Per-level in-flight guard (R4): at most one upstream call per level at a time.
+  // Per-(workspace, level) in-flight guard (R4): at most one upstream call per level per
+  // workspace, so one workspace's review never blocks another's (FR-010 independence).
   const inFlight = new Set<string>();
 
   return {
-    async review(level: Level, opts: ReviewOptions = {}): Promise<ReviewResult> {
+    async review(workspaceId: string, level: Level, opts: ReviewOptions = {}): Promise<ReviewResult> {
       // Not-configured short-circuits before any hash/prompt work (FR-009; hardened in T021).
       if (!config.enabled) throw new AiNotConfiguredError();
 
-      if (inFlight.has(level.id)) throw new AiReviewInFlightError();
-      inFlight.add(level.id);
+      const guardKey = `${workspaceId}:${level.id}`;
+      if (inFlight.has(guardKey)) throw new AiReviewInFlightError();
+      inFlight.add(guardKey);
       try {
-        const design = designs.getByLevelId(level.id);
+        const design = designs.getByLevelId(workspaceId, level.id);
         const nodes = design?.nodes ?? [];
         const edges = design?.edges ?? [];
         if (nodes.length === 0) throw new DesignEmptyError();
@@ -114,14 +116,12 @@ export function createAiReviewService(deps: AiReviewServiceDeps): AiReviewServic
         // Cache (FR-007): an unchanged design reviewed by the same model is served from the
         // stored row — instant, zero upstream spend. `force` bypasses this to re-generate.
         if (!opts.force) {
-          const hit = reviews.findByKey(level.id, hash, model);
+          const hit = reviews.findByKey(workspaceId, level.id, hash, model);
           if (hit) return { review: hit, cached: true };
         }
 
         // buildReviewPrompt throws DesignTooLargeError above the 200-node cap.
         const messages = buildReviewPrompt({ level, nodes, edges, componentsById });
-
-        console.log("Messages: " + JSON.stringify(messages, null, 2))
 
         // First attempt.
         let result = await client.complete({
@@ -166,32 +166,35 @@ export function createAiReviewService(deps: AiReviewServiceDeps): AiReviewServic
           createdAt: new Date().toISOString(),
         };
 
-        console.log("Review: " + JSON.stringify(review))
-
         // Persist only after a successful, validated call (FR-010); a forced re-run overwrites
         // the row for this exact key (FR-006). Flash and pro reviews use different keys, so
         // they coexist as separate rows (R5).
-        reviews.upsertReview(review);
+        reviews.upsertReview(workspaceId, review);
 
         return { review, cached: false };
       } finally {
-        inFlight.delete(level.id);
+        inFlight.delete(guardKey);
       }
     },
 
-    getStored(level: Level): AiReviewGetResponse {
+    getStored(workspaceId: string, level: Level): AiReviewGetResponse {
       const models = { default: config.model, deep: config.deepModel };
-      const design = designs.getByLevelId(level.id);
+      const design = designs.getByLevelId(workspaceId, level.id);
       const nodes = design?.nodes ?? [];
       const edges = design?.edges ?? [];
 
       // Newest row matching the CURRENT design's hash across both models (default + deep
       // coexist; newest wins). No current review ⇒ stale when older reviews exist for other
       // hashes, i.e. the design changed since it was last reviewed (contracts/api.md § GET).
-      const review = nodes.length > 0 ? reviews.findLatestForHash(level.id, designHash(nodes, edges)) : null;
-      const stale = review === null && reviews.hasAnyForLevel(level.id);
+      const review =
+        nodes.length > 0
+          ? reviews.findLatestForHash(workspaceId, level.id, designHash(nodes, edges))
+          : null;
+      const stale = review === null && reviews.hasAnyForLevel(workspaceId, level.id);
 
-      return { available: true, models, review, stale };
+      // `available` mirrors whether AI review is configured (FR-009): a disabled config
+      // reports false so the UI hides the feature without ever calling upstream.
+      return { available: config.enabled, models, review, stale };
     },
   };
 }

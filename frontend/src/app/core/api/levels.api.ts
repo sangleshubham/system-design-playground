@@ -1,7 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import type { Observable } from 'rxjs';
+import { catchError, type Observable } from 'rxjs';
 import type { Attempt, AttemptResult, DesignUpsertRequest, LevelPayload } from '../models.js';
+import { mapStaleWrite } from '../stale-write.js';
 
 @Injectable({ providedIn: 'root' })
 export class LevelsApi {
@@ -11,11 +12,21 @@ export class LevelsApi {
     return this.http.get<LevelPayload>(`/api/v1/levels/${encodeURIComponent(levelId)}`);
   }
 
-  saveDesign(levelId: string, body: DesignUpsertRequest): Observable<{ updatedAt: string }> {
-    return this.http.put<{ updatedAt: string }>(
-      `/api/v1/levels/${encodeURIComponent(levelId)}/design`,
-      body,
-    );
+  /**
+   * Save the level canvas. `baseUpdatedAt` is the optimistic-concurrency precondition
+   * (research R6); on a mismatch the returned observable errors with a StaleWriteError.
+   */
+  saveDesign(
+    levelId: string,
+    body: DesignUpsertRequest,
+    baseUpdatedAt?: string,
+  ): Observable<{ updatedAt: string }> {
+    return this.http
+      .put<{ updatedAt: string }>(`/api/v1/levels/${encodeURIComponent(levelId)}/design`, {
+        ...body,
+        ...(baseUpdatedAt ? { baseUpdatedAt } : {}),
+      })
+      .pipe(catchError(mapStaleWrite));
   }
 
   runAttempt(levelId: string): Observable<AttemptResult> {

@@ -19,7 +19,6 @@ function readReasoningEffort(raw: string | undefined): 'high' | 'max' {
 
 export function loadAiConfig(): AiConfig {
   const apiKey = process.env.DEEPSEEK_API_KEY || undefined;
-  console.log("API Key --> ", apiKey?.length)
   return {
     enabled: Boolean(apiKey),
     apiKey,

@@ -9,11 +9,13 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
-import { of, switchMap } from 'rxjs';
+import { firstValueFrom, of, switchMap, tap, type Observable } from 'rxjs';
 import { PlaygroundStore } from './state/playground.store.js';
 import { ContentApi } from '../../core/api/content.api.js';
 import { LevelsApi } from '../../core/api/levels.api.js';
 import { AiReviewApi } from '../../core/api/ai-review.api.js';
+import { ConflictDialogService } from '../../shared/conflict-dialog.service.js';
+import { StaleWriteError } from '../../core/stale-write.js';
 import { PaletteComponent } from './palette/palette.component.js';
 import { CanvasComponent } from './canvas/canvas.component.js';
 import { CanvasControlsComponent } from './canvas/canvas-controls.component.js';
@@ -24,7 +26,7 @@ import { AiReviewPanelComponent } from './results/ai-review-panel.component.js';
 import { DifficultyBadge } from '../../shared/difficulty-badge.component.js';
 import { AppIcon } from '../../shared/app-icon.component.js';
 import { createAutosave, type AutosaveHandle } from './state/autosave.js';
-import type { AttemptResult } from '../../core/models.js';
+import type { AttemptResult, Design } from '../../core/models.js';
 
 type Status = 'loading' | 'ready' | 'locked' | 'notfound' | 'error';
 
@@ -55,6 +57,7 @@ export class PlaygroundPage {
   private readonly contentApi = inject(ContentApi);
   private readonly levelsApi = inject(LevelsApi);
   private readonly aiReviewApi = inject(AiReviewApi);
+  private readonly conflictDialog = inject(ConflictDialogService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly status = signal<Status>('loading');
@@ -71,8 +74,12 @@ export class PlaygroundPage {
   readonly contextOpen = signal(false);
 
   private levelId = '';
-  private readonly autosave: AutosaveHandle = createAutosave(this.store, () =>
-    this.levelsApi.saveDesign(this.levelId, this.store.toUpsertRequest()),
+  /** The last `updatedAt` we know the server holds — the optimistic-concurrency base (R6). */
+  private lastUpdatedAt: string | null = null;
+  private readonly autosave: AutosaveHandle = createAutosave(
+    this.store,
+    () => this.persistDesign(this.lastUpdatedAt ?? undefined),
+    { onConflict: (current) => this.handleConflict(current) },
   );
   readonly saveStatus = this.autosave.status;
 
@@ -114,6 +121,7 @@ export class PlaygroundPage {
           // Re-baseline autosave so hydrating the saved design doesn't look like an edit.
           this.autosave.prime();
           this.store.hydrate(payload, payload.design);
+          this.lastUpdatedAt = payload.design?.updatedAt ?? null;
           this.status.set('ready');
           this.loadBest(id);
           this.loadAiAvailability(id);
@@ -129,6 +137,33 @@ export class PlaygroundPage {
           }
         },
       });
+  }
+
+  /** Save the canvas with the current concurrency base, adopting the fresh updatedAt on 200. */
+  private persistDesign(base?: string): Observable<{ updatedAt: string }> {
+    return this.levelsApi
+      .saveDesign(this.levelId, this.store.toUpsertRequest(), base)
+      .pipe(tap((res) => (this.lastUpdatedAt = res.updatedAt)));
+  }
+
+  /**
+   * Resolve a 409 stale_write (FR-011): reload replaces the canvas with the winning version;
+   * overwrite re-saves the local canvas on top of it; dismiss leaves the canvas untouched and
+   * unsaved. Overwrite re-bases and re-resolves if a further conflict lands (never silent-retry).
+   */
+  private async handleConflict(current: Design): Promise<void> {
+    const choice = await this.conflictDialog.open();
+    if (choice === 'reload') {
+      this.autosave.prime();
+      this.store.hydrate(this.store.level(), current);
+      this.lastUpdatedAt = current.updatedAt;
+    } else if (choice === 'overwrite') {
+      try {
+        await firstValueFrom(this.persistDesign(current.updatedAt));
+      } catch (err) {
+        if (err instanceof StaleWriteError) return this.handleConflict(err.current);
+      }
+    }
   }
 
   private loadBest(id: string): void {

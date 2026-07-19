@@ -6,18 +6,20 @@
 import { Router } from 'express';
 import type { AppDeps } from '../deps.js';
 import { DesignUpsertRequestSchema } from '../models/index.js';
-import { badRequest, locked, notFound } from '../http/http-error.js';
+import { badRequest, locked, notFound, sendStaleWrite } from '../http/http-error.js';
 import { validateDesignGraph } from '../services/design-validation.js';
+import { requireWorkspaceId } from '../auth/auth.middleware.js';
 
 export function levelsRouter(deps: AppDeps): Router {
   const router = Router();
 
   router.get('/levels/:levelId', (req, res) => {
+    const workspaceId = requireWorkspaceId(res);
     const level = deps.content.getLevelById(req.params.levelId);
     if (!level) throw notFound(`Unknown level "${req.params.levelId}".`);
 
-    if (!deps.progress.isUnlocked(level)) {
-      const blocker = deps.progress.blockingLevel(level);
+    if (!deps.progress.isUnlocked(workspaceId, level)) {
+      const blocker = deps.progress.blockingLevel(workspaceId, level);
       throw locked(
         blocker
           ? `Complete "${blocker.title}" (level ${blocker.order}) to unlock this level.`
@@ -27,15 +29,16 @@ export function levelsRouter(deps: AppDeps): Router {
     }
 
     // Opening a level sets the resume pointer (FR-029).
-    deps.progress.touch(level.id);
-    const design = deps.db.designs.getByLevelId(level.id);
+    deps.progress.touch(workspaceId, level.id);
+    const design = deps.db.designs.getByLevelId(workspaceId, level.id);
     res.json({ ...level, design });
   });
 
   router.put('/levels/:levelId/design', (req, res) => {
+    const workspaceId = requireWorkspaceId(res);
     const level = deps.content.getLevelById(req.params.levelId);
     if (!level) throw notFound(`Unknown level "${req.params.levelId}".`);
-    if (!deps.progress.isUnlocked(level)) {
+    if (!deps.progress.isUnlocked(workspaceId, level)) {
       throw locked('This level is locked.');
     }
 
@@ -45,12 +48,24 @@ export function levelsRouter(deps: AppDeps): Router {
         `Invalid design payload: ${parsed.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`,
       );
     }
-    const { nodes, edges, notes, revealedHintCount } = parsed.data;
+    const { nodes, edges, notes, revealedHintCount, baseUpdatedAt } = parsed.data;
     validateDesignGraph({ nodes, edges, notes }, deps.content);
 
-    const result = deps.db.designs.upsertLevelDesign(level.id, { nodes, edges, notes }, revealedHintCount);
-    deps.progress.touch(level.id);
-    res.json(result);
+    const outcome = deps.db.designs.upsertLevelDesign(
+      workspaceId,
+      level.id,
+      { nodes, edges, notes },
+      revealedHintCount,
+      baseUpdatedAt,
+    );
+    if (outcome.status === 'stale') {
+      // Never touch the resume pointer on a rejected write.
+      sendStaleWrite(res, outcome.current);
+      return;
+    }
+
+    deps.progress.touch(workspaceId, level.id);
+    res.json({ updatedAt: outcome.updatedAt });
   });
 
   return router;

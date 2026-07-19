@@ -5,12 +5,14 @@
  */
 import { Router } from 'express';
 import type { AppDeps } from '../deps.js';
+import { requireWorkspaceId } from '../auth/auth.middleware.js';
 
 export function progressRouter(deps: AppDeps): Router {
   const router = Router();
 
   router.get('/progress', (_req, res) => {
-    const progress = deps.progress.get();
+    const workspaceId = requireWorkspaceId(res);
+    const progress = deps.progress.get(workspaceId);
     const levels = deps.content.getLevels();
     const completed = progress.completedLevelIds.length;
     const levelCount = levels.length;
@@ -20,7 +22,7 @@ export function progressRouter(deps: AppDeps): Router {
     let cont: { levelId: string; title: string; updatedAt: string } | null = null;
     if (progress.lastTouchedLevelId) {
       const level = deps.content.getLevelById(progress.lastTouchedLevelId);
-      const design = level ? deps.db.designs.getByLevelId(level.id) : null;
+      const design = level ? deps.db.designs.getByLevelId(workspaceId, level.id) : null;
       if (level && design) {
         cont = { levelId: level.id, title: level.title, updatedAt: design.updatedAt };
       }

@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import request from 'supertest';
 import { makeApp, level1Solution } from '../helpers.js';
 import type { AiConfig } from '../../src/config/ai.config.js';
 import type { DeepSeekClient, DeepSeekResult } from '../../src/services/ai/deepseek.client.js';
@@ -61,21 +60,21 @@ function aiReviewCount(db: ReturnType<typeof makeApp>['db']): number {
   return (db.db.prepare('SELECT COUNT(*) as c FROM ai_reviews').get() as { c: number }).c;
 }
 
-async function saveLevel1Solution(app: ReturnType<typeof makeApp>['app']): Promise<void> {
+async function saveLevel1Solution(api: ReturnType<typeof makeApp>['api']): Promise<void> {
   const { nodes, edges } = level1Solution();
-  await request(app)
+  await api
     .put('/api/v1/levels/level-1/design')
     .send({ nodes, edges, notes: [], revealedHintCount: 0 });
 }
 
 /** Save a distinct design (extra node) so its hash differs from the base solution. */
-async function saveEditedLevel1Design(app: ReturnType<typeof makeApp>['app']): Promise<void> {
+async function saveEditedLevel1Design(api: ReturnType<typeof makeApp>['api']): Promise<void> {
   const { nodes, edges } = level1Solution();
   const edited = [
     ...nodes,
     { id: 'n5', componentId: 'load-balancer', displayName: 'Load Balancer', note: '', x: 800, y: 0 },
   ];
-  await request(app)
+  await api
     .put('/api/v1/levels/level-1/design')
     .send({ nodes: edited, edges, notes: [], revealedHintCount: 0 });
 }
@@ -83,10 +82,10 @@ async function saveEditedLevel1Design(app: ReturnType<typeof makeApp>['app']): P
 describe('POST /api/v1/levels/:levelId/ai-review', () => {
   it('returns a 200 review matching the contract shape', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const res = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const res = await api.post('/api/v1/levels/level-1/ai-review').send({});
 
     expect(res.status).toBe(200);
     expect(res.body.cached).toBe(false);
@@ -109,10 +108,10 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
       .fn<DeepSeekClient['complete']>()
       .mockResolvedValueOnce(result('not valid json'))
       .mockResolvedValueOnce(result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const res = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const res = await api.post('/api/v1/levels/level-1/ai-review').send({});
 
     expect(res.status).toBe(200);
     expect(complete).toHaveBeenCalledTimes(2);
@@ -120,10 +119,10 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
 
   it('returns 502 ai_malformed_output after two invalid responses, no upstream calls beyond the retry', async () => {
     const complete = vi.fn(async () => result('still not json'));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const res = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const res = await api.post('/api/v1/levels/level-1/ai-review').send({});
 
     expect(res.status).toBe(502);
     expect(res.body.error.code).toBe('ai_malformed_output');
@@ -132,10 +131,10 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
 
   it('returns 422 design_empty before any upstream call', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
     // Fresh in-memory DB: level-1 has no saved design yet.
 
-    const res = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const res = await api.post('/api/v1/levels/level-1/ai-review').send({});
 
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('design_empty');
@@ -148,20 +147,20 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
       resolveComplete = resolve;
     });
     const complete = vi.fn(() => pending);
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
     // supertest's Test is lazy — it only fires once `.then`/`.end` is invoked — so attach
     // a handler immediately to kick off request 1 before request 2 is sent.
     let firstStatus = -1;
-    const first = request(app)
+    const first = api
       .post('/api/v1/levels/level-1/ai-review')
       .send({})
       .then((res) => {
         firstStatus = res.status;
       });
     await new Promise((r) => setTimeout(r, 20));
-    const second = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const second = await api.post('/api/v1/levels/level-1/ai-review').send({});
 
     expect(second.status).toBe(409);
     expect(second.body.error.code).toBe('ai_review_in_flight');
@@ -173,10 +172,10 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
 
   it('uses the configured deep model when deep: true', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const res = await request(app).post('/api/v1/levels/level-1/ai-review').send({ deep: true });
+    const res = await api.post('/api/v1/levels/level-1/ai-review').send({ deep: true });
 
     expect(res.status).toBe(200);
     expect(res.body.review.model).toBe('deepseek-v4-pro');
@@ -185,13 +184,13 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
 
   it('returns 404 for an unknown level and 423 for a locked level, never calling upstream', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
 
-    const notFound = await request(app).post('/api/v1/levels/no-such-level/ai-review').send({});
+    const notFound = await api.post('/api/v1/levels/no-such-level/ai-review').send({});
     expect(notFound.status).toBe(404);
     expect(notFound.body.error.code).toBe('level_not_found');
 
-    const locked = await request(app).post('/api/v1/levels/level-5/ai-review').send({});
+    const locked = await api.post('/api/v1/levels/level-5/ai-review').send({});
     expect(locked.status).toBe(423);
     expect(locked.body.error.code).toBe('level_locked');
 
@@ -202,15 +201,15 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
 describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)', () => {
   it('serves a repeat request from the stored review with ZERO extra upstream calls', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const first = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const first = await api.post('/api/v1/levels/level-1/ai-review').send({});
     expect(first.status).toBe(200);
     expect(first.body.cached).toBe(false);
     expect(complete).toHaveBeenCalledTimes(1);
 
-    const second = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const second = await api.post('/api/v1/levels/level-1/ai-review').send({});
     expect(second.status).toBe(200);
     expect(second.body.cached).toBe(true);
     expect(second.body.review.id).toBe(first.body.review.id); // same stored row
@@ -219,11 +218,11 @@ describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)',
 
   it('force: true re-calls the model and replaces the stored row', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const first = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
-    const forced = await request(app).post('/api/v1/levels/level-1/ai-review').send({ force: true });
+    const first = await api.post('/api/v1/levels/level-1/ai-review').send({});
+    const forced = await api.post('/api/v1/levels/level-1/ai-review').send({ force: true });
 
     expect(forced.status).toBe(200);
     expect(forced.body.cached).toBe(false);
@@ -231,7 +230,7 @@ describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)',
     expect(forced.body.review.id).not.toBe(first.body.review.id); // row replaced
 
     // The replacement is now the cached row for the unchanged design.
-    const afterForce = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const afterForce = await api.post('/api/v1/levels/level-1/ai-review').send({});
     expect(afterForce.body.cached).toBe(true);
     expect(afterForce.body.review.id).toBe(forced.body.review.id);
     expect(complete).toHaveBeenCalledTimes(2);
@@ -239,18 +238,18 @@ describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)',
 
   it('flash and deep (pro) reviews of the same design coexist as separate cached rows', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const flash = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
-    const pro = await request(app).post('/api/v1/levels/level-1/ai-review').send({ deep: true });
+    const flash = await api.post('/api/v1/levels/level-1/ai-review').send({});
+    const pro = await api.post('/api/v1/levels/level-1/ai-review').send({ deep: true });
     expect(flash.body.review.model).toBe('deepseek-v4-flash');
     expect(pro.body.review.model).toBe('deepseek-v4-pro');
     expect(complete).toHaveBeenCalledTimes(2); // one per model — neither was a cache hit
 
     // Each model now serves its own cached row.
-    const flashAgain = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
-    const proAgain = await request(app).post('/api/v1/levels/level-1/ai-review').send({ deep: true });
+    const flashAgain = await api.post('/api/v1/levels/level-1/ai-review').send({});
+    const proAgain = await api.post('/api/v1/levels/level-1/ai-review').send({ deep: true });
     expect(flashAgain.body.cached).toBe(true);
     expect(flashAgain.body.review.model).toBe('deepseek-v4-flash');
     expect(proAgain.body.cached).toBe(true);
@@ -260,14 +259,14 @@ describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)',
 
   it('a design edit changes the hash, so the next request is a fresh (uncached) review', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    await api.post('/api/v1/levels/level-1/ai-review').send({});
     expect(complete).toHaveBeenCalledTimes(1);
 
-    await saveEditedLevel1Design(app);
-    const afterEdit = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    await saveEditedLevel1Design(api);
+    const afterEdit = await api.post('/api/v1/levels/level-1/ai-review').send({});
     expect(afterEdit.body.cached).toBe(false);
     expect(complete).toHaveBeenCalledTimes(2);
   });
@@ -276,10 +275,10 @@ describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)',
 describe('GET /api/v1/levels/:levelId/ai-review (US2 restore)', () => {
   it('reports availability and models, with no review before one is requested', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const res = await request(app).get('/api/v1/levels/level-1/ai-review');
+    const res = await api.get('/api/v1/levels/level-1/ai-review');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       available: true,
@@ -292,11 +291,11 @@ describe('GET /api/v1/levels/:levelId/ai-review (US2 restore)', () => {
 
   it('returns the stored review for the current design without calling upstream', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const posted = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
-    const res = await request(app).get('/api/v1/levels/level-1/ai-review');
+    const posted = await api.post('/api/v1/levels/level-1/ai-review').send({});
+    const res = await api.get('/api/v1/levels/level-1/ai-review');
 
     expect(res.status).toBe(200);
     expect(res.body.review.id).toBe(posted.body.review.id);
@@ -306,25 +305,25 @@ describe('GET /api/v1/levels/:levelId/ai-review (US2 restore)', () => {
 
   it('returns the newest review across models for the current design', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    await request(app).post('/api/v1/levels/level-1/ai-review').send({});
-    const pro = await request(app).post('/api/v1/levels/level-1/ai-review').send({ deep: true });
+    await api.post('/api/v1/levels/level-1/ai-review').send({});
+    const pro = await api.post('/api/v1/levels/level-1/ai-review').send({ deep: true });
 
-    const res = await request(app).get('/api/v1/levels/level-1/ai-review');
+    const res = await api.get('/api/v1/levels/level-1/ai-review');
     expect(res.body.review.id).toBe(pro.body.review.id); // pro was created last → newest wins
     expect(res.body.review.model).toBe('deepseek-v4-pro');
   });
 
   it('flags stale=true once the design changes after a review exists', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
-    await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
+    await api.post('/api/v1/levels/level-1/ai-review').send({});
 
-    await saveEditedLevel1Design(app);
-    const res = await request(app).get('/api/v1/levels/level-1/ai-review');
+    await saveEditedLevel1Design(api);
+    const res = await api.get('/api/v1/levels/level-1/ai-review');
 
     expect(res.body.review).toBeNull();
     expect(res.body.stale).toBe(true);
@@ -332,13 +331,13 @@ describe('GET /api/v1/levels/:levelId/ai-review (US2 restore)', () => {
 
   it('applies the same 404/423 level guards and never calls upstream', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
 
-    const notFound = await request(app).get('/api/v1/levels/no-such-level/ai-review');
+    const notFound = await api.get('/api/v1/levels/no-such-level/ai-review');
     expect(notFound.status).toBe(404);
     expect(notFound.body.error.code).toBe('level_not_found');
 
-    const locked = await request(app).get('/api/v1/levels/level-5/ai-review');
+    const locked = await api.get('/api/v1/levels/level-5/ai-review');
     expect(locked.status).toBe(423);
     expect(locked.body.error.code).toBe('level_locked');
 
@@ -361,10 +360,10 @@ describe('POST /api/v1/levels/:levelId/ai-review — upstream failure matrix (US
       const complete = vi.fn(async () => {
         throw new ErrCls();
       });
-      const { app, db } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
-      await saveLevel1Solution(app);
+      const { api, db } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+      await saveLevel1Solution(api);
 
-      const res = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+      const res = await api.post('/api/v1/levels/level-1/ai-review').send({});
 
       expect(res.status).toBe(status);
       expect(res.body.error.code).toBe(code);
@@ -386,10 +385,10 @@ describe('AI review unavailable — playground unaffected (US3 regression guard,
 
   it('POST ai-review short-circuits to 503 ai_not_configured before any upstream call', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app, db } = makeApp({ aiConfig: AI_CONFIG_DISABLED, aiClient: fakeClient(complete) });
-    await saveLevel1Solution(app);
+    const { api, db } = makeApp({ aiConfig: AI_CONFIG_DISABLED, aiClient: fakeClient(complete) });
+    await saveLevel1Solution(api);
 
-    const res = await request(app).post('/api/v1/levels/level-1/ai-review').send({});
+    const res = await api.post('/api/v1/levels/level-1/ai-review').send({});
 
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe('ai_not_configured');
@@ -399,9 +398,9 @@ describe('AI review unavailable — playground unaffected (US3 regression guard,
 
   it('GET ai-review reports available: false with no review, never calling upstream', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
-    const { app } = makeApp({ aiConfig: AI_CONFIG_DISABLED, aiClient: fakeClient(complete) });
+    const { api } = makeApp({ aiConfig: AI_CONFIG_DISABLED, aiClient: fakeClient(complete) });
 
-    const res = await request(app).get('/api/v1/levels/level-1/ai-review');
+    const res = await api.get('/api/v1/levels/level-1/ai-review');
 
     expect(res.status).toBe(200);
     expect(res.body.available).toBe(false);
@@ -410,10 +409,10 @@ describe('AI review unavailable — playground unaffected (US3 regression guard,
   });
 
   it('RUN (attempts) behaves exactly as feature 001 with no DEEPSEEK_API_KEY (SC-004)', async () => {
-    const { app } = makeApp({ aiConfig: AI_CONFIG_DISABLED });
-    await saveLevel1Solution(app);
+    const { api } = makeApp({ aiConfig: AI_CONFIG_DISABLED });
+    await saveLevel1Solution(api);
 
-    const res = await request(app).post('/api/v1/levels/level-1/attempts');
+    const res = await api.post('/api/v1/levels/level-1/attempts');
 
     expect(res.status).toBe(200);
     expect(res.body.passed).toBe(true);

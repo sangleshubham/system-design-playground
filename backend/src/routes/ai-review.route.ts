@@ -14,6 +14,7 @@ import type { AppDeps } from '../deps.js';
 import { AiReviewRequestSchema, type AiReviewErrorCode } from '../models/ai-review.js';
 import { ApiHttpError, badRequest } from '../http/http-error.js';
 import { AiReviewError } from '../services/ai/errors.js';
+import { requireWorkspaceId } from '../auth/auth.middleware.js';
 
 /** Contract error table (contracts/api.md): AI error code → HTTP status. */
 const AI_ERROR_STATUS: Record<AiReviewErrorCode, number> = {
@@ -35,21 +36,23 @@ export function aiReviewRouter(deps: AppDeps): Router {
   const router = Router();
 
   /** Shared level/lock guards (as attempts.route.ts): 404 unknown, 423 locked. */
-  function resolveLevel(levelId: string) {
+  function resolveLevel(workspaceId: string, levelId: string) {
     const level = deps.content.getLevelById(levelId);
     if (!level) throw new ApiHttpError(404, 'level_not_found', `Unknown level "${levelId}".`);
-    if (!deps.progress.isUnlocked(level)) throw new ApiHttpError(423, 'level_locked', 'This level is locked.');
+    if (!deps.progress.isUnlocked(workspaceId, level))
+      throw new ApiHttpError(423, 'level_locked', 'This level is locked.');
     return level;
   }
 
   router.post('/levels/:levelId/ai-review', async (req, res) => {
-    const level = resolveLevel(req.params.levelId);
+    const workspaceId = requireWorkspaceId(res);
+    const level = resolveLevel(workspaceId, req.params.levelId);
 
     const parsed = AiReviewRequestSchema.safeParse(req.body ?? {});
     if (!parsed.success) throw badRequest('Invalid request body: expected optional { force?, deep? } booleans.');
 
     try {
-      const { review, cached } = await deps.aiReviewService.review(level, {
+      const { review, cached } = await deps.aiReviewService.review(workspaceId, level, {
         force: parsed.data.force,
         deep: parsed.data.deep,
       });
@@ -65,8 +68,9 @@ export function aiReviewRouter(deps: AppDeps): Router {
   // Read-only: the latest stored review for the current saved design + availability. Lets the
   // UI restore state after reload without spending tokens; never calls upstream.
   router.get('/levels/:levelId/ai-review', (req, res) => {
-    const level = resolveLevel(req.params.levelId);
-    res.json(deps.aiReviewService.getStored(level));
+    const workspaceId = requireWorkspaceId(res);
+    const level = resolveLevel(workspaceId, req.params.levelId);
+    res.json(deps.aiReviewService.getStored(workspaceId, level));
   });
 
   return router;

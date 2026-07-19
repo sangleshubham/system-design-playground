@@ -8,15 +8,23 @@
     <a routerLink="/lab" routerLinkActive="active">Lab</a>
     <a routerLink="/sandbox" routerLinkActive="active">Sandbox</a>
   </nav>
-  <button
-    type="button"
-    class="theme-toggle"
-    (click)="theme.toggle()"
-    [attr.aria-label]="'Switch to ' + (theme.theme() === 'light' ? 'dark' : 'light') + ' theme'"
-    title="Toggle theme"
-  >
-    {{ theme.theme() === 'light' ? '🌙' : '☀️' }}
-  </button>
+  <div class="topnav-actions">
+    @if (keys.hasKey()) {
+      <div class="workspace-menu" title="Your workspace">
+        <span class="workspace-stub" aria-label="Workspace key">{{ maskedKey() }}</span>
+        <button type="button" class="switch-key" (click)="switchKey()">Switch key</button>
+      </div>
+    }
+    <button
+      type="button"
+      class="theme-toggle"
+      (click)="theme.toggle()"
+      [attr.aria-label]="'Switch to ' + (theme.theme() === 'light' ? 'dark' : 'light') + ' theme'"
+      title="Toggle theme"
+    >
+      {{ theme.theme() === 'light' ? '🌙' : '☀️' }}
+    </button>
+  </div>
 </header>
 
 <main class="app-main">

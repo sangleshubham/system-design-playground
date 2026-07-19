@@ -1,13 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import request from 'supertest';
 import { makeApp } from '../helpers.js';
 import { ComponentSchema } from '../../src/models/index.js';
 import { contentService } from '../../src/services/content.service.js';
 
 describe('GET /api/v1/components', () => {
   it('returns 200 with the full 42-component catalog, each valid', async () => {
-    const { app } = makeApp();
-    const res = await request(app).get('/api/v1/components');
+    const { api } = makeApp();
+    const res = await api.get('/api/v1/components');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body).toHaveLength(42);
@@ -17,8 +16,8 @@ describe('GET /api/v1/components', () => {
   });
 
   it('covers all seven categories', async () => {
-    const { app } = makeApp();
-    const res = await request(app).get('/api/v1/components');
+    const { api } = makeApp();
+    const res = await api.get('/api/v1/components');
     const categories = new Set(res.body.map((c: { category: string }) => c.category));
     expect([...categories].sort()).toEqual(
       ['caching', 'compute', 'messaging', 'networking', 'services', 'storage', 'user'].sort(),

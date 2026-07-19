@@ -8,13 +8,23 @@
  * the canvas (contract: RUN scores the saved design).
  */
 import { DestroyRef, type Signal, effect, inject, signal } from '@angular/core';
-import { type Observable, of } from 'rxjs';
-import { catchError, map, tap } from 'rxjs/operators';
+import { type Observable, from, of } from 'rxjs';
+import { catchError, finalize, map, tap } from 'rxjs/operators';
 import type { PlaygroundStore } from './playground.store.js';
+import type { Design } from '../../../core/models.js';
+import { StaleWriteError } from '../../../core/stale-write.js';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved';
 
 export const AUTOSAVE_DEBOUNCE_MS = 2000;
+
+/** Resolve a 409 stale_write (FR-011): open the dialog, then reload/overwrite/dismiss. */
+export type ConflictHandler = (current: Design) => Promise<void>;
+
+export interface CreateAutosaveOptions {
+  debounceMs?: number;
+  onConflict?: ConflictHandler;
+}
 
 export interface AutosaveHandle {
   /** 'idle' before any save, 'saving' while a change is pending/in-flight, 'saved' after success. */
@@ -30,14 +40,19 @@ export class Autosaver {
   readonly status = signal<SaveStatus>('idle');
   private timer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  // Set while a stale-write conflict is being resolved: no autosave fires until it settles,
+  // so the dialog is never raised twice concurrently and no silent retry slips through (T024).
+  private paused = false;
 
   constructor(
     private readonly save: () => Observable<unknown>,
     private readonly debounceMs = AUTOSAVE_DEBOUNCE_MS,
+    private readonly onConflict?: ConflictHandler,
   ) {}
 
   /** Mark the canvas dirty and (re)start the debounce window. */
   notifyDirty(): void {
+    if (this.paused) return;
     this.dirty = true;
     this.status.set('saving');
     if (this.timer) clearTimeout(this.timer);
@@ -50,6 +65,7 @@ export class Autosaver {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.paused) return of(undefined);
     return this.dirty ? this.persist() : of(undefined);
   }
 
@@ -68,8 +84,20 @@ export class Autosaver {
     return this.save().pipe(
       map(() => undefined),
       tap({ next: () => this.status.set('saved') }),
-      // Errors surface via the HTTP interceptor's toast; keep the stream alive.
-      catchError(() => {
+      catchError((err: unknown) => {
+        // Stale write: hand off to the conflict handler and pause autosave until it resolves.
+        if (err instanceof StaleWriteError && this.onConflict) {
+          this.paused = true;
+          this.status.set('idle');
+          return from(this.onConflict(err.current)).pipe(
+            map(() => undefined),
+            catchError(() => of(undefined)),
+            finalize(() => {
+              this.paused = false;
+            }),
+          );
+        }
+        // Other errors surface via the HTTP interceptor's toast; keep the stream alive.
         this.status.set('idle');
         return of(undefined);
       }),
@@ -84,9 +112,9 @@ export class Autosaver {
 export function createAutosave(
   store: PlaygroundStore,
   save: () => Observable<unknown>,
-  debounceMs = AUTOSAVE_DEBOUNCE_MS,
+  options: CreateAutosaveOptions = {},
 ): AutosaveHandle {
-  const autosaver = new Autosaver(save, debounceMs);
+  const autosaver = new Autosaver(save, options.debounceMs ?? AUTOSAVE_DEBOUNCE_MS, options.onConflict);
   const destroyRef = inject(DestroyRef);
   let primed = false;
 

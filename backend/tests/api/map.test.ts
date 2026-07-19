@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import request from 'supertest';
 import { makeApp, level1Solution } from '../helpers.js';
 
 describe('GET /api/v1/map', () => {
   it('fresh DB: only level-1 unlocked, the rest locked, totals reflect all 12 levels', async () => {
-    const { app } = makeApp();
-    const res = await request(app).get('/api/v1/map');
+    const { api } = makeApp();
+    const res = await api.get('/api/v1/map');
     expect(res.status).toBe(200);
     expect(res.body.totals).toEqual({ completed: 0, levels: 12, unlockedThroughOrder: 1 });
 
@@ -26,14 +25,14 @@ describe('GET /api/v1/map', () => {
   });
 
   it('after a passing level-1 attempt, level-2 unlocks and act-1 progress reads 1/7', async () => {
-    const { app } = makeApp();
+    const { api } = makeApp();
     const { nodes, edges } = level1Solution();
-    await request(app)
+    await api
       .put('/api/v1/levels/level-1/design')
       .send({ nodes, edges, notes: [], revealedHintCount: 0 });
-    await request(app).post('/api/v1/levels/level-1/attempts');
+    await api.post('/api/v1/levels/level-1/attempts');
 
-    const res = await request(app).get('/api/v1/map');
+    const res = await api.get('/api/v1/map');
     const act1 = res.body.acts.find((a: { id: string }) => a.id === 'act-1');
     expect(act1.completedCount).toBe(1);
     expect(act1.levelCount).toBe(7);

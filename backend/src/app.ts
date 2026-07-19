@@ -14,6 +14,7 @@ import type { AppDeps } from './deps.js';
 import { loadAiConfig, type AiConfig } from './config/ai.config.js';
 import { createDeepSeekClient, type DeepSeekClient } from './services/ai/deepseek.client.js';
 import { createAiReviewService } from './services/ai/ai-review.service.js';
+import { FixedWindowRateLimiter } from './http/rate-limit.js';
 
 export interface CreateAppOptions {
   db?: DbContext;
@@ -41,8 +42,6 @@ export function createApp(options: CreateAppOptions = {}): Express {
 
   const aiConfig = options.aiConfig ?? loadAiConfig();
 
-  console.log("API Key --> ", aiConfig)
-
   const componentsById = new Map(contentService.getComponents().map((c) => [c.id, c]));
   const aiClient =
     options.aiClient ??
@@ -60,7 +59,19 @@ export function createApp(options: CreateAppOptions = {}): Express {
     componentsById,
   });
 
-  const deps: AppDeps = { db, content: contentService, progress, aiConfig, aiReviewService };
+  // Per-IP rate-limit buckets (research R7): 10 failed validations/min, 5 key creations/min.
+  const failLimiter = new FixedWindowRateLimiter({ limit: 10 });
+  const createLimiter = new FixedWindowRateLimiter({ limit: 5 });
+
+  const deps: AppDeps = {
+    db,
+    content: contentService,
+    progress,
+    aiConfig,
+    aiReviewService,
+    failLimiter,
+    createLimiter,
+  };
 
   const app = express();
   app.use(express.json({ limit: '2mb' }));

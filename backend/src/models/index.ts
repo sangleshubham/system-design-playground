@@ -251,12 +251,14 @@ export const DesignGraphSchema = z.object({
 });
 export type DesignGraph = z.infer<typeof DesignGraphSchema>;
 
-/** Request body for PUT /levels/:levelId/design. */
+/** Request body for PUT /levels/:levelId/design. `baseUpdatedAt` is the optimistic-concurrency
+ *  precondition (research R6): the updatedAt the client loaded. Omitted → unconditional write. */
 export const DesignUpsertRequestSchema = z.object({
   nodes: z.array(DesignNodeSchema),
   edges: z.array(DesignEdgeSchema),
   notes: z.array(StickyNoteSchema),
   revealedHintCount: z.number().int().min(0),
+  baseUpdatedAt: z.string().optional(),
 });
 export type DesignUpsertRequest = z.infer<typeof DesignUpsertRequestSchema>;
 
@@ -266,12 +268,14 @@ export const SandboxCreateRequestSchema = z.object({
 });
 export type SandboxCreateRequest = z.infer<typeof SandboxCreateRequestSchema>;
 
-/** Request body for PUT /sandbox/designs/:id — graph plus optional rename. */
+/** Request body for PUT /sandbox/designs/:id — graph, optional rename, optional
+ *  `baseUpdatedAt` concurrency precondition (research R6). Omitted → unconditional write. */
 export const SandboxUpsertRequestSchema = z.object({
   nodes: z.array(DesignNodeSchema),
   edges: z.array(DesignEdgeSchema),
   notes: z.array(StickyNoteSchema),
   name: z.string().min(1).optional(),
+  baseUpdatedAt: z.string().optional(),
 });
 export type SandboxUpsertRequest = z.infer<typeof SandboxUpsertRequestSchema>;
 

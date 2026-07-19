@@ -1,0 +1,82 @@
+<section class="welcome">
+  <div class="panel card shadow-elevated">
+    @if (view() === 'choice') {
+      <header class="intro">
+        <span class="logo">◇</span>
+        <h1>System Design Playground</h1>
+        <p>
+          Your work is saved under an anonymous <strong>access key</strong> — no email, no
+          password. Create one to start, or enter a key you already have.
+        </p>
+      </header>
+
+      <div class="actions">
+        <div class="action">
+          <button
+            type="button"
+            class="btn primary block"
+            [disabled]="creating()"
+            (click)="createKey()"
+          >
+            {{ creating() ? 'Creating…' : 'Create a new key' }}
+          </button>
+          <p class="hint">A fresh workspace, ready in one click.</p>
+          @if (createError()) {
+            <p class="error" role="alert">{{ createError() }}</p>
+          }
+        </div>
+
+        <div class="divider"><span>or</span></div>
+
+        <div class="action">
+          <button type="button" class="btn block" (click)="toggleEnter()">I have a key</button>
+          @if (enterOpen()) {
+            <form class="enter" (submit)="$event.preventDefault(); submitKey()">
+              <label for="key-input" class="sr-only">Access key</label>
+              <input
+                id="key-input"
+                class="key-field"
+                type="text"
+                inputmode="latin"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                placeholder="XXXX-XXXX-XXXX"
+                [value]="entryValue()"
+                (input)="onEntryInput($any($event.target).value)"
+                [attr.aria-invalid]="enterError() ? 'true' : null"
+              />
+              <button type="submit" class="btn primary" [disabled]="checking()">
+                {{ checking() ? 'Checking…' : 'Continue' }}
+              </button>
+            </form>
+            @if (enterError()) {
+              <p class="error" role="alert">{{ enterError() }}</p>
+            }
+          }
+        </div>
+      </div>
+    } @else {
+      <header class="intro">
+        <h1>Save your key</h1>
+        <p>This is the only time it's shown. Anyone with this key can open your workspace.</p>
+      </header>
+
+      <div class="reveal">
+        <output class="key-display" aria-label="Your access key">{{ revealedKey() }}</output>
+        <button type="button" class="btn copy" (click)="copyKey()">
+          {{ copied() ? '✓ Copied' : 'Copy' }}
+        </button>
+      </div>
+
+      <p class="warning" role="alert">
+        ⚠ Store it somewhere safe. If you lose this key, your workspace can't be recovered —
+        there is no reset.
+      </p>
+
+      <button type="button" class="btn primary block start" (click)="acknowledgeAndStart()">
+        I saved my key — start designing
+      </button>
+    }
+  </div>
+</section>

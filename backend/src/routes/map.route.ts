@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import type { AppDeps } from '../deps.js';
 import type { Level } from '../models/index.js';
+import { requireWorkspaceId } from '../auth/auth.middleware.js';
 
 type LevelStatus = 'locked' | 'unlocked' | 'completed';
 
@@ -21,7 +22,8 @@ export function mapRouter(deps: AppDeps): Router {
   const router = Router();
 
   router.get('/map', (_req, res) => {
-    const progress = deps.progress.get();
+    const workspaceId = requireWorkspaceId(res);
+    const progress = deps.progress.get(workspaceId);
     const levels = deps.content.getLevels();
 
     const acts = deps.content.getActs().map((act) => {
@@ -36,7 +38,7 @@ export function mapRouter(deps: AppDeps): Router {
           objectives: level.objectives,
           missionCount: level.missions.length,
           status: statusFor(level, progress.completedLevelIds, progress.unlockedThroughOrder),
-          best: deps.db.attempts.bestByLevelId(level.id),
+          best: deps.db.attempts.bestByLevelId(workspaceId, level.id),
         }));
 
       return {

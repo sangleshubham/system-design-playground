@@ -24,6 +24,21 @@ export const notFound = (message: string) => new ApiHttpError(404, 'not_found', 
 export const locked = (message: string, extra?: Record<string, unknown>) =>
   new ApiHttpError(423, 'locked', message, extra);
 
+/** Standard message for an optimistic-concurrency conflict (research R6, FR-011). */
+export const STALE_WRITE_MESSAGE = 'This design changed since you loaded it.';
+
+/**
+ * 409 for a stale design save. Unlike the standard envelope, the winning row rides at the
+ * TOP LEVEL as `current` (sibling to `error`) so the client can adopt it directly
+ * (contracts/scoped-api-changes.md § Concurrency delta).
+ */
+export function sendStaleWrite(res: Response, current: unknown): void {
+  res.status(409).json({
+    error: { code: 'stale_write', message: STALE_WRITE_MESSAGE },
+    current,
+  });
+}
+
 /** Express error-handling middleware (must be registered last). */
 export function errorHandler(
   err: unknown,
