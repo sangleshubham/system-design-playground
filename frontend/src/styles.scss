@@ -97,6 +97,17 @@ f-flow .f-node,
   }
 }
 
+// The theme also paints the pan/zoom-transformed .f-canvas layer with its own
+// surface token (near-white in light, near-black in dark), so it shows up as a
+// mismatched rectangle floating over the f-flow background. Remap both
+// background aliases to the app's canvas token — this also keeps
+// --ff-connector-node-ring-color (derived from the canvas alias) matching what
+// is actually behind the nodes. Declared after the theme, so :root wins by order.
+:root {
+  --ff-flow-background-color: var(--canvas-bg);
+  --ff-canvas-background-color: var(--canvas-bg);
+}
+
 // Utilities
 .card {
   background-color: var(--surface-raised);
