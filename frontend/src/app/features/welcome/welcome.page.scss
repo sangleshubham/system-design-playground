@@ -21,8 +21,9 @@
   margin-bottom: 28px;
 
   .logo {
-    font-size: 34px;
-    color: var(--color-primary);
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
   }
 
   h1 {

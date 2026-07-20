@@ -26,8 +26,9 @@
   font-weight: 700;
 }
 .brand .logo {
-  color: var(--color-primary);
-  font-size: 1.25rem;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .links {
