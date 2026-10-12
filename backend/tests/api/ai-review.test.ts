@@ -14,7 +14,7 @@ import {
 const AI_CONFIG: AiConfig = {
   enabled: true,
   apiKey: 'test-key',
-  model: 'deepseek-v4-flash',
+  model: 'deepseek-flash',
   deepModel: 'deepseek-v4-pro',
   baseUrl: 'https://api.deepseek.test',
   reasoningEffort: 'high',
@@ -89,7 +89,7 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.cached).toBe(false);
-    expect(res.body.review.model).toBe('deepseek-v4-flash');
+    expect(res.body.review.model).toBe('deepseek-flash');
     expect(res.body.review.payload.score).toBe(78);
     expect(res.body.review.payload.dimensions).toHaveLength(5);
     expect(res.body.review.payload.realWorldComparison.referenceArchitecture).toBe(
@@ -243,7 +243,7 @@ describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)',
 
     const flash = await api.post('/api/v1/levels/level-1/ai-review').send({});
     const pro = await api.post('/api/v1/levels/level-1/ai-review').send({ deep: true });
-    expect(flash.body.review.model).toBe('deepseek-v4-flash');
+    expect(flash.body.review.model).toBe('deepseek-flash');
     expect(pro.body.review.model).toBe('deepseek-v4-pro');
     expect(complete).toHaveBeenCalledTimes(2); // one per model — neither was a cache hit
 
@@ -251,7 +251,7 @@ describe('POST /api/v1/levels/:levelId/ai-review — cache & persistence (US2)',
     const flashAgain = await api.post('/api/v1/levels/level-1/ai-review').send({});
     const proAgain = await api.post('/api/v1/levels/level-1/ai-review').send({ deep: true });
     expect(flashAgain.body.cached).toBe(true);
-    expect(flashAgain.body.review.model).toBe('deepseek-v4-flash');
+    expect(flashAgain.body.review.model).toBe('deepseek-flash');
     expect(proAgain.body.cached).toBe(true);
     expect(proAgain.body.review.model).toBe('deepseek-v4-pro');
     expect(complete).toHaveBeenCalledTimes(2);
@@ -282,7 +282,7 @@ describe('GET /api/v1/levels/:levelId/ai-review (US2 restore)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       available: true,
-      models: { default: 'deepseek-v4-flash', deep: 'deepseek-v4-pro' },
+      models: { default: 'deepseek-flash', deep: 'deepseek-v4-pro' },
       review: null,
       stale: false,
     });
@@ -376,7 +376,7 @@ describe('AI review unavailable — playground unaffected (US3 regression guard,
   const AI_CONFIG_DISABLED: AiConfig = {
     enabled: false,
     apiKey: undefined,
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-flash',
     deepModel: 'deepseek-v4-pro',
     baseUrl: 'https://api.deepseek.test',
     reasoningEffort: 'high',

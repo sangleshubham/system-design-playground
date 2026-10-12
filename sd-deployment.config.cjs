@@ -6,6 +6,8 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
       PORT: 3000,
+      // Only reachable via nginx-proxy-manager (playground.shubhamsangle.com)
+      HOST: '172.17.0.1',
     },
     // Auto-restart on crash
     autorestart: true,

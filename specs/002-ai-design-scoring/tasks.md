@@ -65,7 +65,7 @@ to branching complexity.
 
 - [X] T001 [P] Create `backend/src/config/ai.config.ts`: typed `AiConfig` read once from
   env — `DEEPSEEK_API_KEY` (absence ⇒ `enabled: false`), `DEEPSEEK_MODEL` (default
-  `deepseek-v4-flash`), `DEEPSEEK_DEEP_MODEL` (default `deepseek-v4-pro`),
+  `deepseek-flash`), `DEEPSEEK_DEEP_MODEL` (default `deepseek-v4-pro`),
   `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`),
   `DEEPSEEK_REASONING_EFFORT` (`high`|`max`, default `high`), `DEEPSEEK_TIMEOUT_MS`
   (default `120000`). The key must never appear in logs, errors, or serialized output

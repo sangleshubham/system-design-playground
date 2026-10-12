@@ -8,7 +8,7 @@ import type { AiReview, AiReviewGetResponse, AiReviewPostResponse } from '../../
 /** GET response with no stored review — the common "nothing cached yet" default. */
 const NO_STORED_REVIEW: AiReviewGetResponse = {
   available: true,
-  models: { default: 'deepseek-v4-flash', deep: 'deepseek-v4-pro' },
+  models: { default: 'deepseek-flash', deep: 'deepseek-v4-pro' },
   review: null,
   stale: false,
 };
@@ -17,7 +17,7 @@ const review: AiReview = {
   id: 'r1',
   levelId: 'level-2',
   designHash: 'hash1',
-  model: 'deepseek-v4-flash',
+  model: 'deepseek-flash',
   reasoningEffort: 'high',
   payload: {
     score: 78,

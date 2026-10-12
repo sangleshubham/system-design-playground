@@ -16,7 +16,7 @@ const MESSAGES: ChatMessage[] = [
 ];
 
 function baseReq() {
-  return { model: 'deepseek-v4-flash', messages: MESSAGES, reasoningEffort: 'high' as const };
+  return { model: 'deepseek-flash', messages: MESSAGES, reasoningEffort: 'high' as const };
 }
 
 function stubFetch(impl: (...args: unknown[]) => unknown) {
@@ -63,7 +63,7 @@ describe('deepseek.client', () => {
     expect(url).toBe('https://api.deepseek.test/chat/completions');
     expect(init.headers.Authorization).toBe('Bearer test-key');
     const body = JSON.parse(init.body);
-    expect(body.model).toBe('deepseek-v4-flash');
+    expect(body.model).toBe('deepseek-flash');
     expect(body.thinking).toEqual({ type: 'enabled' });
     expect(body.reasoning_effort).toBe('high');
     expect(body.stream).toBe(false);

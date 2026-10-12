@@ -18,7 +18,7 @@ flushes autosave first, same rule as RUN.
 - `force: true` → bypass the design-hash cache and re-call the model, replacing the
   stored review for this exact design.
 - `deep: true` → use the deep-review model (`DEEPSEEK_DEEP_MODEL`, default
-  `deepseek-v4-pro`) instead of the default (`deepseek-v4-flash`). The cache lookup
+  `deepseek-v4-pro`) instead of the default (`deepseek-flash`). The cache lookup
   uses the selected model, so a flash review and a pro review of the same design
   coexist as separate rows.
 
@@ -30,7 +30,7 @@ flushes autosave first, same rule as RUN.
     "id": "a1b2…",
     "levelId": "level-2",
     "designHash": "9f3c…",
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "reasoningEffort": "high",
     "createdAt": "2026-07-09T12:00:00.000Z",
     "payload": {
@@ -89,7 +89,7 @@ lets the UI restore state after reload without spending tokens.
 ```json
 {
   "available": true,            // false ⇒ ai_not_configured
-  "models": { "default": "deepseek-v4-flash", "deep": "deepseek-v4-pro" },
+  "models": { "default": "deepseek-flash", "deep": "deepseek-v4-pro" },
   "review": { …same shape as POST, or null… },
   "stale": false                // true ⇒ stored review exists but design changed since
 }
@@ -106,7 +106,7 @@ lets the UI restore state after reload without spending tokens.
 
 ```json
 {
-  "model": "deepseek-v4-flash",
+  "model": "deepseek-flash",
   "messages": [
     { "role": "system", "content": "<rubric + JSON schema + real-world comparison instruction>" },
     { "role": "user", "content": "<question + serialized design + derived facts>" }

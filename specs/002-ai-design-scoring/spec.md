@@ -119,7 +119,7 @@ because an optional paid dependency is absent.
 - **FR-002**: The review input MUST include the level's challenge ("question": brief,
   design spec, missions) and the saved design graph (components, names, connections).
 - **FR-003**: The review MUST be produced by a DeepSeek reasoning model with
-  thinking/reasoning enabled. The default model is `deepseek-v4-flash`; the learner
+  thinking/reasoning enabled. The default model is `deepseek-flash`; the learner
   MAY request a "deep review" that uses `deepseek-v4-pro` for a stronger critique.
   The model that produced each review MUST be recorded with it.
   *(Amended 2026-07-11: originally pinned to `deepseek-v4-pro` only; changed after

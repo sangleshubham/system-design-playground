@@ -14,7 +14,7 @@ A persisted, advisory evaluation of one exact design for one level by one model.
 | `id` | string (uuid) | PK |
 | `levelId` | string | FK → levels content; part of cache key |
 | `designHash` | string (64 hex) | sha256 of the canonical design (see below); part of cache key |
-| `model` | string | `deepseek-v4-flash` (default) or `deepseek-v4-pro` (deep review); part of cache key |
+| `model` | string | `deepseek-flash` (default) or `deepseek-v4-pro` (deep review); part of cache key |
 | `reasoningEffort` | string | `high` \| `max` (as configured at call time) |
 | `payload` | JSON (`AiReviewPayload`) | The validated review document (below) |
 | `promptTokens` | integer | from upstream `usage` |
@@ -92,7 +92,7 @@ Assembled per call by `review-prompt.ts`:
 | Env var | Default | Behavior |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | — | absent → feature disabled (`ai_not_configured`) |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | default review model; cache-key participant |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | default review model; cache-key participant |
 | `DEEPSEEK_DEEP_MODEL` | `deepseek-v4-pro` | used when the request sets `deep: true` |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | |
 | `DEEPSEEK_REASONING_EFFORT` | `high` | `high` \| `max` |

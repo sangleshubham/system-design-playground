@@ -10,7 +10,7 @@
 
 Add an advisory AI review to the playground: on demand, the backend sends the level's
 challenge ("question") and the learner's saved design graph to a DeepSeek reasoning
-model (`deepseek-v4-flash` by default — thinking enabled, `reasoning_effort: high` —
+model (`deepseek-flash` by default — thinking enabled, `reasoning_effort: high` —
 with an opt-in "deep review" on `deepseek-v4-pro`) and stores the
 returned structured review — overall score, five AI dimensions with commentary,
 strengths, gaps, a real-world-systems comparison, and next steps. Reviews are
@@ -32,7 +32,7 @@ error, and not-configured states — no new routes, no canvas changes.
 - Backend: Express 5, `better-sqlite3`, `zod` (all already in the project). **No new
   runtime dependency** — DeepSeek's OpenAI-compatible REST API is called with native
   `fetch` ([research.md R2](./research.md#r2-api-access--plain-fetch-no-sdk)).
-- Upstream service: DeepSeek `POST /chat/completions`, model `deepseek-v4-flash`
+- Upstream service: DeepSeek `POST /chat/completions`, model `deepseek-flash`
   (default) or `deepseek-v4-pro` (deep review), `thinking: {type: enabled}`,
   `reasoning_effort: high` (R1)
 - Frontend: Angular 20 standalone components + Signals (existing patterns; no new libs)

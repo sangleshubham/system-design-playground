@@ -12,7 +12,7 @@ Contracts: [contracts/api.md](./contracts/api.md) · Data model: [data-model.md]
 ```bash
 export DEEPSEEK_API_KEY=sk-…          # required; feature is disabled without it
 # optional overrides:
-# export DEEPSEEK_MODEL=deepseek-v4-flash       # default review model
+# export DEEPSEEK_MODEL=deepseek-flash       # default review model
 # export DEEPSEEK_DEEP_MODEL=deepseek-v4-pro    # used when POST body has deep:true
 # export DEEPSEEK_REASONING_EFFORT=high
 # export DEEPSEEK_TIMEOUT_MS=120000
@@ -84,7 +84,7 @@ and unlocking works** (feature 001 unaffected).
 ## Cost note
 
 Each fresh review ≈ 3–5K prompt + 1–8K completion tokens: **≈ $0.003–0.005** on the
-default `deepseek-v4-flash`, **≈ $0.01–0.02** for a `deep: true` review on
+default `deepseek-flash`, **≈ $0.01–0.02** for a `deep: true` review on
 `deepseek-v4-pro` (research R5). Repeat calls also hit DeepSeek's automatic prefix
 cache on the static rubric/question portion of the prompt (R9). V1+V2 above spend
 for exactly one review.

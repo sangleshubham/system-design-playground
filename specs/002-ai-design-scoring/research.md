@@ -10,7 +10,7 @@ per the owner's model-strategy decision.
 
 ## R1. Model & reasoning mode
 
-- **Decision**: Default `deepseek-v4-flash` with thinking enabled — request body
+- **Decision**: Default `deepseek-flash` with thinking enabled — request body
   `"thinking": {"type": "enabled"}` plus `"reasoning_effort": "high"`. A per-request
   "deep review" opt-in (`deep: true`) switches to `deepseek-v4-pro` with identical
   settings.
