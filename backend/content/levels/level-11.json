@@ -1,21 +1,23 @@
 {
   "id": "level-11",
   "actId": "act-2",
-  "order": 11,
+  "order": 12,
   "title": "Web Crawler",
   "difficulty": "expert",
   "summary": "Crawl the web with a distributed, polite fleet of fetchers coordinated through a URL frontier.",
-  "narrative": "A web crawler is a deceptively simple loop wrapped around a brutal scaling problem. Start with a handful of seed URLs, fetch each page, pull the links out of it, and repeat — forever, across billions of pages, without ever fetching the same URL twice or hammering any single site into the ground.\n\nThe heart of the design is the frontier: a message queue holding the URLs still to be visited. An operator seeds it through a coordinator, and a fleet of stateless worker fetchers pulls URLs off the queue, downloads each page, and pushes the newly discovered links back onto the frontier. Add more workers and you crawl faster; that is the whole point of decoupling the queue from the fetchers.\n\nTwo things keep the loop honest. Before fetching, every worker checks a Bloom filter of URLs already seen — a probabilistic set that answers \"have we crawled this?\" in constant space across tens of billions of URLs. And every page has two homes: the raw bytes land in blob storage, while the processed, searchable content is written to a search index. Wire the loop, and the crawl runs itself.",
-  "objectives": ["URL frontier queue", "Worker fetcher fleet", "Bloom-filter dedup", "Raw and indexed storage"],
+  "narrative": "A web crawler is a deceptively simple loop wrapped around a brutal scaling problem. Start with a handful of seed URLs, fetch each page, pull the links out of it, and repeat — forever, across billions of pages, without duplicate work within a crawl generation or hammering any single site into the ground.\n\nThe heart of the design is the frontier: a message queue holding the URLs still to be visited. An operator seeds it through a coordinator, and a fleet of stateless worker fetchers pulls URLs off the queue, downloads each page, and pushes the newly discovered links back onto the frontier. Add more workers and you crawl faster; that is the whole point of decoupling the queue from the fetchers. Model front queues by priority and back queues per host; a host becomes eligible only after its next allowed fetch time. The Client here is the crawl operator, and the Web Server is the coordinator. A Task Scheduler registers periodic re-crawls and feeds due URLs into the frontier.\n\nNormalize URLs before deduplication: strip fragments, normalize hosts and default ports, and apply an explicit policy for query parameters. A Bloom filter cheaply identifies definitely unseen URLs; confirm positive matches against exact visited state to avoid silently dropping unseen pages. Keep exact crawl metadata — each URL's last-crawled generation and content hash — in a key-value metadata table, and store the raw pages in Blob Storage; a matching content hash stops a duplicate page from being indexed twice. Claim each URL/generation with a conditional write to that metadata table before fetching, and expire failed claims for retry. Workers share a Cache for robots.txt and per-domain next-fetch timestamps; atomically reserve host slots before fetching and honor robots policies. Keep processed content in the Search Index, and optionally connect Workers to DNS with cached resolutions. Scheduled re-crawls create a new eligible generation instead of being blocked forever by the seen filter.",
+  "objectives": ["Priority URL frontier", "Polite worker fleet", "URL & content dedup", "Scheduled re-crawls"],
   "specs": {
     "functional": [
       "Fetch pages starting from a set of seed URLs",
       "Discover and enqueue new links found on each page",
-      "Skip URLs that have already been crawled",
-      "Store raw pages and index their processed content"
+      "Normalize URLs, suppress duplicate work per generation, and deduplicate content by hash",
+      "Store raw pages and index their processed content",
+      "Cache robots.txt and atomically coordinate per-host fetch delays",
+      "Schedule prioritized periodic re-crawls through the frontier"
     ],
     "nonFunctional": [
-      "Never crawl the same URL twice",
+      "Avoid duplicate fetches within a crawl generation while allowing scheduled re-crawls",
       "Scale throughput by adding more fetchers",
       "Stay polite so no single host is overwhelmed"
     ],
@@ -26,8 +28,8 @@
     "budgetPerHr": 6.0,
     "latencyTargetMs": 250,
     "capacity": ["~10,000 pages fetched/sec across the fleet", "Tens of billions of unique URLs tracked"],
-    "tradeoff": "A Bloom filter trades a tiny false-positive rate for constant-time dedup across billions of URLs, avoiding a giant exact set.",
-    "bonus": "Add Monitoring & Alerting to track fetch rate, frontier queue depth, and per-host politeness."
+    "tradeoff": "Bloom-filter membership uses space proportional to the number of URLs at a chosen false-positive rate; exact visited-state checks on positive matches prevent skipped pages. Priority front queues improve freshness while per-host back queues and shared timestamps enforce politeness. Periodic re-crawls trade bandwidth for freshness.",
+    "bonus": "Add Monitoring & Alerting to track fetch rate, frontier queue depth, and per-host politeness. Connect Workers to DNS for hostname resolution with cached results."
   },
   "missions": [
     { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "web-server", "label": "Seed and control the crawl through the Coordinator" },
@@ -37,7 +39,11 @@
     { "id": "m5", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Store raw fetched pages in Blob Storage" },
     { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Index the processed page content" },
     { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "message-queue", "label": "Enqueue newly discovered links back onto the frontier" },
-    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true }
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "cache", "label": "Cache robots.txt and per-domain politeness timestamps" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Register periodic re-crawls with the Task Scheduler" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "message-queue", "label": "Feed scheduled re-crawls into the frontier" },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true },
+    { "id": "m12", "kind": "connect", "fromComponentId": "worker", "toComponentId": "dns", "label": "Resolve hosts through DNS with cached results", "bonus": true }
   ],
   "topologyRules": [
     {
@@ -73,10 +79,26 @@
       "message": "Every fetcher must consult the Bloom Filter, or the crawl loops on URLs it has already seen."
     }
   ],
-  "recommendedComponentIds": ["client", "web-server", "message-queue", "worker", "bloom-filter", "blob-storage", "search-index", "monitoring"],
+  "recommendedComponentIds": ["client", "web-server", "message-queue", "worker", "bloom-filter", "blob-storage", "search-index", "monitoring", "task-scheduler", "cache", "dns"],
   "hints": [
     "Model the crawl as a loop: the Client seeds the Coordinator (Web Server), which fills the Message Queue frontier; Workers pull URLs, fetch pages, and push new links back onto the queue.",
-    "Before fetching, every Worker must check the Bloom Filter so the crawl doesn't re-download URLs it has already seen.",
-    "Store the raw pages in Blob Storage and the processed, searchable content in the Search Index -- and run a fleet of at least two Workers."
+    "Connect Workers to the Bloom Filter for URL screening, Blob Storage for raw pages, and the Cache for robots.txt and atomic host-delay reservations. Confirm Bloom positives against an exact key-value visited/content-hash table, and use generation-aware dedup so re-crawls remain possible.",
+    "Run two Workers, each wired to the frontier, Bloom Filter, Blob Storage, Search Index, Cache and DNS. Add Web Server → Task Scheduler → Message Queue for re-crawls and Web Server → Monitoring. Front queues prioritize URLs; per-host back queues enforce delays."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-web-crawler",
+  "tips": [
+    "Should it be real-time or periodic?",
+    "How do you handle URL deduplication?",
+    "What system do you use to track visited vs unvisited URLs?",
+    "How to implement delay between requests to the same domain?",
+    "How to prioritize pages (e.g. news sites vs low-priority content)?",
+    "Should you support re-crawling? How do you schedule that?"
+  ],
+  "resources": [
+    {
+      "title": "Good solution",
+      "url": "https://www.hellointerview.com/learn/system-design/problem-breakdowns/web-crawler",
+      "kind": "article"
+    }
   ]
 }

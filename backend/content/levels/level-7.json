@@ -1,7 +1,7 @@
 {
   "id": "level-7",
   "actId": "act-1",
-  "order": 7,
+  "order": 8,
   "title": "Unique ID Generator",
   "difficulty": "hard",
   "summary": "Mint globally-unique, roughly time-sortable IDs at scale without a central bottleneck.",

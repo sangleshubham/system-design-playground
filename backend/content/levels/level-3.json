@@ -5,13 +5,15 @@
   "title": "URL Shortener",
   "difficulty": "medium",
   "summary": "Build a read-heavy service that turns long URLs into short codes and redirects at scale.",
-  "narrative": "A URL shortener looks trivial and is secretly a masterclass in scale. Writes are rare — someone creates a short link now and then. Reads are enormous — every click on every shortened link, forever, is a lookup that must resolve in milliseconds.\n\nThat lopsided read/write ratio drives the whole design. You want a datastore that scales reads horizontally, a cache to serve the hottest links from memory, and an app tier behind a load balancer to glue it together. Clients should never touch the datastore directly.\n\nWire up the read path so a redirect hits the cache first and falls back to the store, and keep the write path clean. A Bloom filter can cheaply reject codes that were never issued.",
-  "objectives": ["Read-heavy scaling", "Cache-aside pattern", "Key-value storage", "Probabilistic filters"],
+  "narrative": "A URL shortener looks trivial and is secretly a masterclass in scale. Reads outnumber writes 100:1: at ~10,000 redirects/sec, expect ~100 new links/sec. Seven base62 characters give 62^7 ≈ 3.5 trillion possible keys. Reads are enormous — every click on every shortened link, forever, is a lookup that must resolve in milliseconds.\n\nThat lopsided read/write ratio drives the whole design. You want a datastore that scales reads horizontally, a cache to serve the hottest links from memory, and an app tier behind a load balancer to glue it together. Clients should never touch the datastore directly. A Key Generation Service pre-generates unused keys and leases disjoint batches to app servers; a standby shares durable allocation state so failover cannot issue the same batch twice.\n\nWire up the read path so a redirect hits the cache first and falls back to the store, and keep the write path clean. A Bloom filter can cheaply reject codes that were never issued. Choose 302 redirects when each click must reach the service for analytics; a cacheable 301 can bypass future lookups. Store optional expiry with each mapping, check it even on cache hits, and stream click events asynchronously for analytics.",
+  "objectives": ["Read-heavy scaling", "Cache-aside pattern", "Collision-free base62 keys", "Redirect analytics & expiry"],
   "specs": {
     "functional": [
       "Create a short code for a long URL",
       "Redirect a short code to its original URL",
-      "Serve the hottest links from cache"
+      "Serve the hottest links from cache",
+      "Allocate unique 7-character base62 codes from the Key Generation Service",
+      "Honor optional link expiry and publish click events asynchronously"
     ],
     "nonFunctional": [
       "Redirects resolve in under 50 ms at p99",
@@ -23,9 +25,12 @@
     ],
     "budgetPerHr": 8.0,
     "latencyTargetMs": 200,
-    "capacity": ["~10,000 redirects/sec", "Billions of stored mappings"],
-    "tradeoff": "A cache-aside layer trades occasional stale reads and added complexity for dramatically lower datastore load.",
-    "bonus": "Add a Bloom Filter so lookups for codes that were never issued skip the datastore entirely."
+    "capacity": [
+      "~10,000 redirects/sec and ~100 creates/sec (100:1 reads:writes)",
+      "62^7 ≈ 3.5 trillion possible keys; billions of stored mappings"
+    ],
+    "tradeoff": "A cache-aside layer trades occasional stale reads and added complexity for dramatically lower datastore load. A cacheable 301 reduces repeat requests but hides clicks from analytics; a 302 with appropriate cache controls keeps redirects observable.",
+    "bonus": "Add a Bloom Filter so lookups for codes that were never issued skip the datastore entirely. Stream click events to a Message Queue for analytics."
   },
   "missions": [
     { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client" },
@@ -37,7 +42,10 @@
     { "id": "m7", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance across the app tier" },
     { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Check the Cache first" },
     { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Fall back to the Database on a miss" },
-    { "id": "m10", "kind": "add", "componentId": "bloom-filter", "label": "Add a Bloom Filter", "bonus": true }
+    { "id": "m10", "kind": "add", "componentId": "key-generation-service", "label": "Add a Key Generation Service for unique base62 keys" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "key-generation-service", "label": "Request unique key batches from the Key Generation Service" },
+    { "id": "m12", "kind": "add", "componentId": "bloom-filter", "label": "Add a Bloom Filter", "bonus": true },
+    { "id": "m13", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Stream click events to a Message Queue for analytics", "bonus": true }
   ],
   "topologyRules": [
     {
@@ -71,12 +79,50 @@
       "componentId": "nosql-database",
       "companionComponentId": "cache",
       "message": "Front the datastore with a Cache to protect it from the read flood."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "key-generation-service",
+      "message": "The KGS hands out every key — run a standby so it isn't a single point of failure"
     }
   ],
-  "recommendedComponentIds": ["client", "load-balancer", "web-server", "cache", "nosql-database", "bloom-filter", "monitoring"],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "cache", "nosql-database", "bloom-filter", "key-generation-service", "message-queue"],
   "hints": [
-    "The read path is what matters: Client → Load Balancer → Web Server → Cache, with the NoSQL Database behind the cache.",
-    "Connect the Web Server to BOTH the Cache and the Database — cache first, database on a miss.",
-    "Add a second Web Server to remove the single point of failure, and wire the Cache to the Database so they're companions."
+    "Start with Client → Load Balancer → Web Server, then add a Cache for the read-heavy redirect workload and a NoSQL Database for durable mappings.",
+    "Connect the Web Server to BOTH the Cache and the Database — cache first, database on a miss. Add a Key Generation Service and connect the Web Server to it for unused base62 key batches.",
+    "Add a second Web Server to remove the single point of failure, and wire the Cache to the Database so they're companions. Run two Key Generation Service instances, connect each Web Server to both, and add Web Server → Bloom Filter and → Message Queue for the bonus paths."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-url-shortening-service-like-tinyurl",
+  "tips": [
+    "How do you generate a unique short ID?",
+    "How do you avoid collisions?",
+    "How do we prevent malicious links, phishing, or spam?",
+    "Do we rate-limit requests from abusive clients?",
+    "Do we support link expiration or deletion?",
+    "How do we store logs for analytics?",
+    "Should we cache frequently accessed short URLs? Where? (Redis, CDN)",
+    "How do we handle hot keys (very popular links)?"
+  ],
+  "resources": [
+    {
+      "title": "Good overview",
+      "url": "https://medium.com/%40sandeep4.verma/system-design-scalable-url-shortener-service-like-tinyurl-106f30f23a82",
+      "kind": "article"
+    },
+    {
+      "title": "Good solution",
+      "url": "http://designgurus.io/blog/url-shortening",
+      "kind": "article"
+    },
+    {
+      "title": "Neetcode solution",
+      "url": "https://www.youtube.com/watch?v=qSJAvd5Mgio",
+      "kind": "video"
+    },
+    {
+      "title": "Another solution",
+      "url": "https://blog.algomaster.io/p/design-a-url-shortener",
+      "kind": "article"
+    }
   ]
 }

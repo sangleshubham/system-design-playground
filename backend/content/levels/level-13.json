@@ -1,0 +1,122 @@
+{
+  "id": "level-13",
+  "actId": "act-1",
+  "order": 4,
+  "title": "Pastebin",
+  "difficulty": "easy",
+  "summary": "Share expiring text pastes through unique short URLs while keeping metadata small and paste bodies durable.",
+  "narrative": "A developer pastes an error log, gets a short URL, and shares it with a teammate. Build Pastebin for anonymous and registered users: accept text up to 10 MB, issue a unique key, and let anyone holding the URL read it until a default or user-chosen expiry. A shared URL is a bearer link, so registered ownership supports management rather than making a paste private.\n\nExpect ~1 M new pastes/day, or ~12 writes/s, and a 5:1 read:write ratio, or ~58 reads/s. At an average ~10 KB per paste, that is ~10 GB/day and ~36 TB over 10 years before expiration and replication. Keep key, owner, expiry and blob pointer in a NoSQL key-value store; store the text bodies in Blob Storage. The Key Generation Service supplies unique short keys and the Cache serves hot pastes.\n\nClients reach redundant Web Servers through a Load Balancer; the app enforces size limits and expiry even on cache hits. Register expiration with the Task Scheduler, whose Worker deletes expired blobs and updates metadata, using retries so cleanup is safe to repeat. Expiry must block reads immediately even if physical cleanup lags. Add a Rate Limiter for anonymous write abuse and Monitoring for failures; keep all client storage access behind the app tier.",
+  "objectives": ["Metadata vs paste bodies", "Unique short URLs", "TTL & background cleanup", "Hot-paste caching"],
+  "specs": {
+    "functional": [
+      "Create a paste up to 10 MB and return a unique short URL",
+      "Allow anonymous and registered users; anyone with the URL can read an unexpired paste",
+      "Store key, owner, expiry and blob pointer in NoSQL, with text bodies in Blob Storage",
+      "Serve hot pastes from Cache and enforce default or user-chosen expiry on every read",
+      "Register expiry jobs; delete expired bodies and update metadata idempotently"
+    ],
+    "nonFunctional": [
+      "Survive a single Web Server failure",
+      "Keep expired pastes unreadable even while background cleanup is delayed",
+      "Scale body storage independently from metadata lookups"
+    ],
+    "constraints": [
+      "Client storage access must pass through the Web Server tier",
+      "Limit paste size to 10 MB; use chunked storage for large bodies if needed",
+      "TTL metadata must invalidate cached content; do not rely solely on asynchronous database TTL deletion"
+    ],
+    "budgetPerHr": 4.0,
+    "latencyTargetMs": 180,
+    "capacity": [
+      "~1 M new pastes/day ≈ 12 writes/s; 5:1 reads:writes ≈ 58 reads/s",
+      "~10 KB average paste → ~10 GB/day → ~36 TB over 10 years before expiry/replication",
+      "Maximum paste size: 10 MB"
+    ],
+    "tradeoff": "Separating small metadata from object bodies keeps the key-value store lean but adds a body fetch on cache misses and requires coordinated cleanup. Background deletion saves request work but may lag expiry, so metadata and cached expiry checks remain authoritative.",
+    "bonus": "Connect the Web Server to a Rate Limiter to throttle anonymous writes and add Monitoring for lookup and cleanup failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client for pasting and reading text" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route clients through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance requests across the Web Server tier" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "key-generation-service", "label": "Allocate unique paste keys from the Key Generation Service" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Store paste metadata in the NoSQL Database" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Store paste content in Blob Storage" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache hot pastes" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Register paste expiry with the Task Scheduler" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "worker", "label": "Dispatch expiry cleanup to a Worker" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Delete expired paste content from Blob Storage" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "rate-limiter", "label": "Throttle anonymous writes with a Rate Limiter", "bonus": true },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for lookup and cleanup failures", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients must never access paste metadata directly."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "blob-storage",
+      "message": "Clients read and write paste bodies through the app tier, never directly in Blob Storage."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Metadata access must pass through the Web Server tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so one failure does not take pastes offline."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "nosql-database",
+      "companionComponentId": "cache",
+      "message": "Connect the NoSQL metadata store to a Cache for hot pastes."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "worker",
+      "message": "The Task Scheduler needs a connected Worker to perform expiry cleanup."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "key-generation-service", "nosql-database", "blob-storage", "cache", "task-scheduler", "worker", "rate-limiter", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Separate small metadata from potentially 10 MB bodies: use NoSQL for the metadata and Blob Storage for the text.",
+    "Connect Web Server → Key Generation Service for unique URLs and → Cache for hot pastes; Cache → NoSQL makes the metadata store and cache companions. Always check cached expiry.",
+    "Run two Web Servers, each connected to the key service, NoSQL, Blob Storage, Cache and Task Scheduler. Wire Task Scheduler → Worker → Blob Storage, plus Worker → NoSQL for cleanup. Add Web Server → Rate Limiter and → Monitoring for the bonuses."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-pastebin",
+  "tips": [
+    "Large pastes: limit the size per paste, and use chunked storage if needed.",
+    "Expiration: store a TTL in the database and run background cleanup jobs.",
+    "Anonymous vs. registered users: think about access control, rate limits, and abuse prevention.",
+    "Unique IDs: generate a random string or hash, or use an incremental counter encoded in base62."
+  ],
+  "resources": [
+    {
+      "title": "Good solution",
+      "url": "https://medium.com/codex/designing-pastebin-77e6e86172eb",
+      "kind": "article"
+    },
+    {
+      "title": "Good 20-minute video",
+      "url": "https://www.youtube.com/watch?v=V_yOcipUqUE",
+      "kind": "video"
+    },
+    {
+      "title": "Alternate solution",
+      "url": "https://ujjwalbhardwaj.me/post/system-design-design-pastebin-text-storage-system",
+      "kind": "article"
+    }
+  ]
+}

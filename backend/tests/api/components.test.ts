@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
 import { makeApp } from '../helpers.js';
 import { ComponentSchema } from '../../src/models/index.js';
 import { contentService } from '../../src/services/content.service.js';
@@ -29,8 +30,13 @@ describe('content validation', () => {
   it('loads and validates every seed file without throwing', () => {
     expect(() => contentService.load()).not.toThrow();
     expect(contentService.getComponents().length).toBe(44);
-    expect(contentService.getLevels().length).toBe(12);
-    expect(contentService.getActs().length).toBe(2);
+    const levelFiles = readdirSync(new URL('../../content/levels/', import.meta.url))
+      .filter((file) => file.endsWith('.json'));
+    const acts = JSON.parse(
+      readFileSync(new URL('../../content/acts.json', import.meta.url), 'utf8'),
+    );
+    expect(contentService.getLevels().length).toBe(levelFiles.length);
+    expect(contentService.getActs().length).toBe(acts.length);
   });
 
   it('has unique, contiguous level orders starting at 1', () => {

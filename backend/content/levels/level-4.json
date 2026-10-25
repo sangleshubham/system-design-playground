@@ -1,23 +1,24 @@
 {
   "id": "level-4",
   "actId": "act-1",
-  "order": 4,
+  "order": 5,
   "title": "Rate Limiter",
   "difficulty": "medium",
   "summary": "Stand up a distributed rate limiter that throttles abusive traffic before it can crush your app tier.",
-  "narrative": "Success brought scrapers. A handful of clients are now hammering your API thousands of times a second — replaying tokens, brute-forcing endpoints, and starving legitimate users of capacity. Your web servers are healthy, but they're drowning in requests that never should have reached them.\n\nThe fix is a rate limiter that sits in the request path, in front of the app tier. Each incoming call is checked against a token bucket keyed by client or API key: if the bucket has tokens, the request passes and a token is spent; if it's empty, the request is rejected with a 429 before it ever touches a web server. The subtlety is that you run several rate-limiter instances behind a load balancer, so the counters can't live in any one of them — they must sit in a shared cache (think Redis) that every instance reads and writes.\n\nBuild the throttle: route clients through the load balancer into the rate limiter, back the limiter with a shared cache for its counters, and only let approved traffic continue to the web servers and on to the datastore. Get it right and the abusers hit a wall while everyone else sails through.",
+  "narrative": "Success brought scrapers. A handful of clients are now hammering your API thousands of times a second — replaying tokens, brute-forcing endpoints, and starving legitimate users of capacity. Your web servers are healthy, but they're drowning in requests that never should have reached them.\n\nThe fix is a rate limiter that sits in the request path, in front of the app tier. Each incoming call is checked against a token bucket keyed by API key, authenticated user id, or IP for anonymous traffic: if the bucket has tokens, the request passes and a token is spent; if it's empty, the request is rejected with HTTP 429 and Retry-After / X-RateLimit-* headers before it ever touches a web server. The subtlety is that you run several rate-limiter instances behind a load balancer, so the counters can't live in any one of them — they must sit in a shared cache (think Redis) that every instance reads and writes. Use atomic Redis INCR with expiry for window counters or Lua for token refill and consumption so concurrent checks cannot overspend.\n\nBuild the throttle: route clients through the load balancer into the rate limiter, back the limiter with a shared cache for its counters, and only let approved traffic continue to the web servers and on to the datastore. Get it right and the abusers hit a wall while everyone else sails through. Compare token bucket bursts with leaky bucket smoothing, fixed-window boundary bursts, and sliding-window logs or counters. Run redundant limiters and decide whether a counter-store outage should fail open for availability or fail closed for protection.",
   "objectives": ["Request throttling", "Shared token-bucket counters", "Protecting downstream services", "Fail-fast rejection"],
   "specs": {
     "functional": [
-      "Check every request against a per-client rate limit",
-      "Reject over-limit traffic before it reaches the app tier",
-      "Share counters across all rate-limiter instances",
+      "Identify callers by API key, user id, or IP and enforce their configured rate limit",
+      "Reject over-limit traffic with HTTP 429, Retry-After and X-RateLimit-* headers before the app tier",
+      "Share Redis counters across limiter instances using atomic INCR/expiry or Lua for multi-step bucket updates",
       "Pass approved requests through to the web servers and datastore"
     ],
     "nonFunctional": [
       "A burst of abuse must not degrade service for well-behaved clients",
       "Limit decisions add negligible latency to legitimate requests",
-      "No single web-server failure takes the API offline"
+      "No single web-server failure takes the API offline",
+      "No single rate-limiter failure takes the API offline"
     ],
     "constraints": [
       "All client traffic enters through the load balancer",
@@ -26,7 +27,7 @@
     "budgetPerHr": 5.0,
     "latencyTargetMs": 200,
     "capacity": ["~20,000 requests/sec at the edge, most rejected under attack", "Millions of distinct client keys tracked in the cache"],
-    "tradeoff": "Centralizing counters in a shared cache trades a tiny bit of added latency and a new dependency for limits that hold correctly no matter which limiter node sees the request.",
+    "tradeoff": "Centralizing counters in a shared cache trades a tiny bit of added latency and a new dependency for limits that hold correctly no matter which limiter node sees the request. Token buckets permit bursts; leaky buckets smooth traffic; fixed windows are cheap but burst at boundaries; sliding-window logs use more memory than approximate counters. Fail-open favors availability during counter-store outages, while fail-closed protects capacity.",
     "bonus": "Add Monitoring so you can watch rejection rates and spot an attack as it ramps."
   },
   "missions": [
@@ -65,12 +66,51 @@
       "kind": "no-spof",
       "componentId": "web-server",
       "message": "Run at least two Web Servers so the app tier survives a single failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "rate-limiter",
+      "message": "The limiter sits on every request — run at least two instances so one is not a single point of failure."
     }
   ],
   "recommendedComponentIds": ["client", "load-balancer", "rate-limiter", "cache", "web-server", "sql-database", "monitoring"],
   "hints": [
     "The Rate Limiter belongs between the Load Balancer and the Web Servers. Wire Client → Load Balancer → Rate Limiter → Web Server so nothing reaches the app tier unchecked.",
     "Multiple limiter instances can't each keep their own count. Connect the Rate Limiter to a Cache so every instance shares one token bucket per client.",
-    "Add a second Web Server for redundancy, and drop in Monitoring to watch how many requests are being rejected as an attack builds."
+    "Run two Rate Limiters, each connected to the shared Cache and both Web Servers. Connect each Web Server to the SQL Database and Monitoring so the app survives a failure and rejection rates stay visible."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-an-api-rate-limiter",
+  "tips": [
+    "How to identify users to rate limit?",
+    "What algorithm do you use for rate limiting?",
+    "How about in a distributed system - how do you scale this in large distributed website?",
+    "How to make your rate limiter fault tolerant?"
+  ],
+  "resources": [
+    {
+      "title": "Great article + mock interview video",
+      "url": "https://www.tryexponent.com/blog/rate-limiter-system-design",
+      "kind": "article"
+    },
+    {
+      "title": "Great solution by Google engineer",
+      "url": "https://www.youtube.com/watch?v=VzW41m4USGs",
+      "kind": "video"
+    },
+    {
+      "title": "Intro",
+      "url": "https://blog.bytebytego.com/p/rate-limiting-fundamentals",
+      "kind": "article"
+    },
+    {
+      "title": "Good article on algorithms",
+      "url": "https://medium.com/geekculture/system-design-design-a-rate-limiter-81d200c9d392",
+      "kind": "article"
+    },
+    {
+      "title": "Leetcode discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/1616482/System-Design%3A-Rate-Limiter",
+      "kind": "discussion"
+    }
   ]
 }

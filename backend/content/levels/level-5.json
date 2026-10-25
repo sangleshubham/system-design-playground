@@ -1,18 +1,20 @@
 {
   "id": "level-5",
   "actId": "act-1",
-  "order": 5,
+  "order": 6,
   "title": "Distributed Key-Value Store",
   "difficulty": "medium",
   "summary": "Build a horizontally-partitioned key-value store with replicas and a coordinator that tracks who owns each key.",
-  "narrative": "One database node can't hold the dataset anymore, and it certainly can't serve the read volume. You need a key-value store that scales out: split the keyspace into shards spread across many nodes, and keep more than one copy of each shard so a dead node isn't lost data.\n\nThe hard part isn't storing bytes — it's agreement. When a request arrives, something has to know which node owns that key, and every part of the system has to agree on that mapping even as nodes join, leave, and fail. That's the job of a coordination service like ZooKeeper or etcd: it holds the authoritative shard map and cluster membership, so a stateless coordinator tier can route each read and write to the node that actually owns the key. Layer a cache in front to soak up the hottest keys, and reads fly.\n\nAssemble it: clients hit the load balancer, which spreads requests over a fleet of stateless coordinator nodes; those nodes consult ZooKeeper/etcd for placement and then read or write the right NoSQL replica, caching hot keys on the way back. Keep clients away from storage — routing is the coordinator's job.",
+  "narrative": "One database node can't hold the dataset anymore, and it certainly can't serve the read volume. You need a key-value store that scales out: split the keyspace into shards spread across many nodes, and keep more than one copy of each shard so a dead node isn't lost data. Consistent hashing with virtual nodes spreads load and limits data movement when membership changes.\n\nThe hard part isn't storing bytes — it's agreement. When a request arrives, something has to know which node owns that key, and every part of the system has to agree on that mapping even as nodes join, leave, and fail. That's the job of a coordination service like ZooKeeper or etcd: it holds the authoritative shard map and cluster membership, so a stateless coordinator tier can cache a versioned placement map and route reads and writes to the owning replicas. Layer a cache in front to soak up the hottest keys, and reads fly. The Web Server tiles represent these routing coordinators. Dynamo-style stores can instead discover membership through gossip; ZooKeeper/etcd is this level's chosen placement approach.\n\nAssemble it: clients hit the load balancer, which spreads requests over a fleet of stateless coordinator nodes; those nodes consult ZooKeeper/etcd for placement and then read or write the right NoSQL replica, caching hot keys on the way back. Keep clients away from storage — routing is the coordinator's job. For replication factor N, quorum reads and writes with R + W > N overlap when they use the same replica set; that alone does not guarantee linearizability with concurrent writes or sloppy quorums. Choose AP availability with eventual reconciliation using vector clocks or last-write-wins, or CP consistency by refusing operations without a quorum during partitions. Hinted handoff repairs temporary replica outages, and Merkle-tree anti-entropy repairs divergent data.",
   "objectives": ["Horizontal sharding", "Replication & redundancy", "Consistency coordination", "Data-tier isolation"],
   "specs": {
     "functional": [
       "Store and retrieve values by key across many nodes",
-      "Partition the keyspace into shards spread over the cluster",
+      "Partition the keyspace with consistent hashing and virtual nodes for balanced ownership",
       "Route each request to the node that owns the key",
-      "Keep at least two copies of every shard"
+      "Keep at least two copies of every shard",
+      "Replicate with factor N and choose read/write quorums R and W (R + W > N for overlap)",
+      "Reconcile concurrent writes with vector clocks or last-write-wins; repair replicas with hinted handoff and Merkle-tree anti-entropy"
     ],
     "nonFunctional": [
       "Losing a single storage node must not lose data",
@@ -26,7 +28,7 @@
     "budgetPerHr": 7.0,
     "latencyTargetMs": 200,
     "capacity": ["~50,000 key ops/sec across the cluster", "Tens of terabytes spread over many shards"],
-    "tradeoff": "Sharding with a coordinator buys near-unlimited horizontal scale, but at the cost of a coordination dependency and the complexity of routing and rebalancing keys.",
+    "tradeoff": "During a network partition, choose AP availability with eventual reconciliation or CP consistency that rejects operations without a quorum. R + W > N gives overlap on a fixed replica set, but concurrency and sloppy quorums require further consistency safeguards. ZooKeeper/etcd makes placement authoritative at the cost of a coordination dependency; Dynamo-style gossip is an alternative.",
     "bonus": "Add Monitoring to watch replica lag and shard balance across the cluster."
   },
   "missions": [
@@ -70,7 +72,32 @@
   "recommendedComponentIds": ["client", "load-balancer", "web-server", "nosql-database", "cache", "zookeeper-etcd", "monitoring"],
   "hints": [
     "Clients hit the Load Balancer, which spreads requests across stateless coordinator nodes (Web Servers). Keep clients well away from storage — the coordinators own the routing.",
-    "The coordinators can't guess which node holds a key. Wire the Web Server to ZooKeeper/etcd so it reads the authoritative shard map before touching storage.",
-    "Add a second NoSQL node so every shard has a replica and losing one isn't data loss, then front the store with a Cache for hot keys. Monitoring closes the loop on replica lag."
+    "Wire each Web Server routing coordinator to ZooKeeper/etcd for a versioned shard map. This level chooses coordinated placement; a Dynamo-style design could use gossip instead.",
+    "Run two Web Servers, connect each to both NoSQL replicas, ZooKeeper/etcd and the Cache, and connect Monitoring to the web tier. Model virtual nodes, quorums and replica repair within those storage nodes."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-keyvalue-store",
+  "tips": [
+    "How will you distribute the data via partitioning?",
+    "How will you make sure the data is not lost (replication)?",
+    "How will you ensure fault tolerance?",
+    "Know your CAP Theorem basics - is your store CA or CP or AP? And why?",
+    "How will you handle concurrent reads or writes?"
+  ],
+  "resources": [
+    {
+      "title": "Good high level solution",
+      "url": "https://www.educative.io/courses/grokking-the-system-design-interview/design-of-a-key-value-store",
+      "kind": "course"
+    },
+    {
+      "title": "Mock Interview with Microsoft Engineer",
+      "url": "https://www.youtube.com/watch?v=6fOoXT1HYxk",
+      "kind": "video"
+    },
+    {
+      "title": "Detailed Video Series on this",
+      "url": "https://www.youtube.com/playlist?list=PL1MM4yIzUdPm2L_Lz8gRa_q6ZElgNoArH",
+      "kind": "video"
+    }
   ]
 }

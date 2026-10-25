@@ -1,17 +1,17 @@
 {
   "id": "level-12",
   "actId": "act-2",
-  "order": 12,
+  "order": 13,
   "title": "Video Streaming Platform",
   "difficulty": "legendary",
   "summary": "Build a YouTube-scale platform: upload once, transcode asynchronously, and stream globally from the edge.",
-  "narrative": "This is the capstone. A creator uploads a two-hour 4K file from a laptop in Berlin; minutes later a viewer in Sao Paulo taps play and it starts instantly at whatever quality their connection can handle. Between those two moments sits nearly every pattern you have learned so far, assembled into one system.\n\nStart with the two paths that must never interfere. The control path carries metadata and uploads: clients enter through a load balancer, an API gateway routes and authorizes each call, and a redundant web tier reads and writes a metadata database with a cache in front for the hot rows. Uploads themselves stream straight into blob storage — the app tier never holds the bytes. The moment an upload lands, the web server drops a job on a message queue.\n\nThat queue feeds the second path: a fleet of transcoding workers that turn each raw upload into a ladder of renditions and write them back to blob storage, all asynchronously so a transcode backlog can never stall ingest or playback. Finally comes global delivery — playback traffic goes Client to CDN, and the CDN pulls transcoded segments from blob storage as its origin. Keep the paths separate, keep the origin protected, and the whole world can press play at once.",
-  "objectives": ["Upload to object storage", "Async transcoding", "CDN global delivery", "Metadata and caching", "Gateway-routed APIs"],
+  "narrative": "This is the capstone. A creator uploads a two-hour 4K file from a laptop in Berlin; minutes later a viewer in Sao Paulo taps play and it starts instantly at whatever quality their connection can handle. Between those two moments sits nearly every pattern you have learned so far, assembled into one system.\n\nStart with two paths that must never interfere. API calls enter through a load balancer and an API gateway into redundant web servers; metadata lives in SQL with a hot-row cache. Support chunked, resumable multipart uploads. Presigned URLs commonly let clients upload parts straight to object storage, but this level chooses an app-mediated upload proxy to preserve its no-direct-storage rule: the web tier streams each chunk into an object-store multipart upload without buffering whole videos. The Web Server → Blob Storage edge represents that transfer. Validate completion before queuing a transcode job.\n\nThe queue feeds transcoding workers that write an HLS/DASH bitrate ladder, manifests and segments back to Blob Storage. Publish playable metadata only when the required renditions are ready. Playback follows Client → CDN → Blob Storage; the player switches bitrate segments based on bandwidth and buffer occupancy. Upload, transcode and playback remain independent so a backlog never stalls existing playback. Watch-time, engagement and abandonment events can use the Message Queue → Stream Processor bonus branch for analytics; Monitoring tracks operational health.",
+  "objectives": ["Resumable object uploads", "Async HLS/DASH encoding", "Adaptive CDN playback", "Gateway & metadata caching"],
   "specs": {
     "functional": [
-      "Accept large video uploads into durable object storage",
-      "Transcode each upload into multiple renditions asynchronously",
-      "Stream video to viewers worldwide from the edge",
+      "Accept chunked, resumable multipart uploads through the app tier into durable object storage",
+      "Transcode asynchronously into an HLS/DASH bitrate ladder and write manifests/segments back to Blob Storage",
+      "Stream from the CDN with adaptive bitrate selection based on bandwidth and buffer occupancy",
       "Store and serve video metadata for browse and playback"
     ],
     "nonFunctional": [
@@ -21,14 +21,14 @@
     ],
     "constraints": [
       "API traffic enters through the load balancer and gateway only",
-      "Clients never touch object storage directly",
+      "Clients never touch object storage directly: this level proxies upload parts through the app tier and serves playback through the CDN",
       "Every API call is routed and authorized by the gateway"
     ],
     "budgetPerHr": 10.0,
     "latencyTargetMs": 200,
     "capacity": ["~500 hours of video uploaded per minute", "Millions of concurrent viewers globally"],
-    "tradeoff": "Decoupling transcoding behind a queue trades immediate availability of a new upload for an ingest path that never stalls under load.",
-    "bonus": "Add Monitoring & Alerting to watch transcode queue depth, CDN hit ratio, and playback errors."
+    "tradeoff": "Decoupling transcoding behind a queue trades immediate availability of a new upload for an ingest path that never stalls under load. App-mediated uploads enforce this level's storage boundary but consume app bandwidth; direct presigned client uploads are a common alternative outside this topology. A larger bitrate ladder raises storage/encoding cost while improving playback across diverse connections.",
+    "bonus": "Add Monitoring & Alerting to watch transcode queue depth, CDN hit ratio, and playback errors. Stream watch-time, engagement and abandonment events from the Message Queue to a Stream Processor."
   },
   "missions": [
     { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Send API traffic to the Load Balancer" },
@@ -38,7 +38,12 @@
     { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Store the uploaded video in Blob Storage" },
     { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Queue an async transcode job on upload" },
     { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let the transcoder fleet pull jobs" },
-    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true }
+    { "id": "m8", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "api-gateway", "label": "Route balanced API traffic through the API Gateway" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Serve playback to clients through the CDN" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Fetch encoded segments from Blob Storage on a CDN miss" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Write transcoded renditions back to Blob Storage" },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring & Alerting", "bonus": true },
+    { "id": "m13", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Process watch-time analytics from the Message Queue", "bonus": true }
   ],
   "topologyRules": [
     {
@@ -74,10 +79,29 @@
       "message": "Front Blob Storage with a CDN, or global playback will crush the origin."
     }
   ],
-  "recommendedComponentIds": ["client", "cdn", "load-balancer", "api-gateway", "web-server", "cache", "sql-database", "blob-storage", "message-queue", "worker", "monitoring"],
+  "recommendedComponentIds": ["client", "cdn", "load-balancer", "api-gateway", "web-server", "cache", "sql-database", "blob-storage", "message-queue", "worker", "monitoring", "stream-processor"],
   "hints": [
     "Split the system in two: an API path (Client -> Load Balancer -> API Gateway -> Web Server) for metadata and uploads, and a playback path (Client -> CDN -> Blob Storage) for watching.",
-    "Uploads land in Blob Storage; the Web Server then drops a job on the Message Queue so a fleet of transcoding Workers can process renditions asynchronously.",
-    "Front Blob Storage with the CDN for global delivery, cache hot metadata, keep the SQL Database as the source of truth, and run at least two Web Servers."
+    "Stream resumable upload parts through Web Server → Blob Storage in this level; direct Client → Blob Storage is forbidden. Wire Web Server → Message Queue → two Workers, then each Worker → Blob Storage for encoded HLS/DASH renditions.",
+    "Front Blob Storage with the CDN for global delivery, cache hot metadata, keep the SQL Database as the source of truth, and run at least two Web Servers. Wire Message Queue → Stream Processor for watch-time analytics and each Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-youtube-or-netflix",
+  "tips": [
+    "How would you design the video upload pipeline - how is the video received, stored, and encoded into multiple resolutions?",
+    "How do you store videos? Object store like S3 or HDFS?",
+    "How do you ensure low-latency, high-availability playback across the globe? Would you use a CDN or edge caching?",
+    "What analytics do you track (watch time, engagement, abandonment)? How is it processed?"
+  ],
+  "resources": [
+    {
+      "title": "High Level Overview",
+      "url": "https://bytebytego.com/courses/system-design-interview/design-youtube",
+      "kind": "course"
+    },
+    {
+      "title": "Good solution",
+      "url": "https://www.hellointerview.com/learn/system-design/problem-breakdowns/youtube",
+      "kind": "article"
+    }
   ]
 }

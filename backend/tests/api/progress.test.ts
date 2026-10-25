@@ -7,7 +7,11 @@ describe('GET /api/v1/progress', () => {
     const { api } = makeApp();
     const res = await api.get('/api/v1/progress');
     expect(res.status).toBe(200);
-    expect(res.body.lab).toEqual({ completed: 0, levels: 12, percent: 0 });
+    expect(res.body.lab).toEqual({
+      completed: 0,
+      levels: contentService.getLevels().length,
+      percent: 0,
+    });
     expect(res.body.continue).toBeNull();
     expect(res.body.recommendedNext).toEqual({ levelId: 'level-1', title: expect.any(String) });
   });
@@ -40,7 +44,7 @@ describe('GET /api/v1/progress', () => {
     });
 
     const res = await api.get('/api/v1/progress');
-    expect(res.body.lab).toEqual({ completed: 12, levels: 12, percent: 100 });
+    expect(res.body.lab).toEqual({ completed: allIds.length, levels: allIds.length, percent: 100 });
     expect(res.body.recommendedNext).toBeNull();
   });
 
@@ -48,7 +52,7 @@ describe('GET /api/v1/progress', () => {
     loadContent();
     const { api, db, workspaceId } = makeApp();
     const byOrder = contentService.getLevels();
-    // Complete levels 1, 2 and 4 out of order: the gap at order 3 is recommended.
+    // Complete display orders 1, 2 and 4 out of order: the gap at order 3 is recommended.
     db.progress.save(workspaceId, {
       completedLevelIds: [byOrder[3].id, byOrder[0].id, byOrder[1].id],
       lastTouchedLevelId: null,

@@ -1,7 +1,7 @@
 {
   "id": "level-6",
   "actId": "act-1",
-  "order": 6,
+  "order": 7,
   "title": "Notification System",
   "difficulty": "medium",
   "summary": "Fan out push, SMS, and email through a queue and a pool of workers — without blocking the request that triggered them.",

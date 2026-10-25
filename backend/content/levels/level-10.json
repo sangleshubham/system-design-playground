@@ -1,17 +1,17 @@
 {
   "id": "level-10",
   "actId": "act-2",
-  "order": 10,
+  "order": 11,
   "title": "Search Autocomplete",
   "difficulty": "expert",
   "summary": "Serve ranked type-ahead completions in milliseconds by precomputing them from the query stream.",
-  "narrative": "The suggestion box under the search bar feels like magic: you type \"sys\" and it already knows you want \"system design\". The trick is that none of that ranking happens while you type. If it did, you'd never hit the sub-50 ms budget a keystroke demands.\n\nThe answer is to split the problem in two. The serving path is deliberately tiny — a request enters through the load balancer, hits a stateless web server, and looks up completions in a search index that is organized by prefix. A cache of the hottest prefixes sits in front so the queries everyone types never even reach the index. Nothing on this path does any thinking.\n\nAll the thinking happens offline. Every query users run is logged onto a message queue, and a stream processor consumes that stream, aggregates how often each term is searched, and writes the top completions per prefix into the index. Persist the rolling counts in a durable datastore so the whole structure can be rebuilt. Get this split right and the suggestions stay fresh while every keystroke stays instant.",
+  "narrative": "The suggestion box under the search bar feels like magic: you type \"sys\" and it already knows you want \"system design\". The trick is that none of that ranking happens while you type. If it did, you'd never hit the sub-50 ms budget a keystroke demands.\n\nThe answer is to split the problem in two. The serving path is deliberately tiny — a request enters through the load balancer, hits a stateless web server, and looks up completions in a search index that is organized by prefix. A cache of the hottest prefixes sits in front so the queries everyone types never even reach the index. The Search Index tile models a prefix trie with top-k completions cached at each node: fast prefix traversal trades memory for avoiding a subtree scan. The Cache maps hot prefixes directly to top-k lists.\n\nAll the aggregation happens off the serving path. Every completed search is logged onto a message queue; a stream processor aggregates term counts and periodically publishes updated top-k suggestions into the prefix index. Persist rolling counts in NoSQL so the structure can be rebuilt. Sampling queries plus periodic batch rebuilds reduce write load and simplify atomic index swaps, but delay trends; streaming updates improve freshness with more update and synchronization work. This level chooses streaming aggregation with periodic publication, keeping expensive updates away from keystroke lookups.",
   "objectives": ["Prefix search", "Top-K prefix caching", "Log-driven pipelines", "Stream aggregation"],
   "specs": {
     "functional": [
       "Return ranked completions for any typed prefix",
       "Serve the most popular prefixes straight from cache",
-      "Rebuild suggestions continuously from the live query stream",
+      "Aggregate completed searches off-path and periodically publish refreshed trie top-k lists",
       "Rank completions by how often users search them"
     ],
     "nonFunctional": [
@@ -21,12 +21,12 @@
     ],
     "constraints": [
       "Clients enter only through the load balancer",
-      "The search index is reachable only from the app tier"
+      "Clients reach the prefix index through the app tier; the stream processor updates it asynchronously"
     ],
     "budgetPerHr": 8.0,
     "latencyTargetMs": 120,
     "capacity": ["~50,000 keystroke lookups/sec", "Billions of historical queries in the logs"],
-    "tradeoff": "Precomputing completions offline trades instant freshness for a serving path fast enough to keep up with every keystroke.",
+    "tradeoff": "Precomputing completions offline trades instant freshness for a serving path fast enough to keep up with every keystroke. Trie nodes cache top-k lists at a memory cost. Sampling and batch rebuilds save ingestion work but lag trends; streaming updates improve freshness with more write coordination.",
     "bonus": "Add Monitoring & Alerting to watch suggestion latency and the freshness lag of the build pipeline."
   },
   "missions": [
@@ -78,5 +78,28 @@
     "The read path must be tiny: Client -> Load Balancer -> Web Server, then check the Cache of hot prefixes before falling back to the Search Index.",
     "Suggestions don't build themselves. Have the Web Server log every query to the Message Queue, and a Stream Processor consume that stream to write the top completions into the Search Index.",
     "Run at least two Web Servers, and give the Stream Processor a NoSQL Database to persist rolling query counts so the index survives a rebuild."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-typeahead-suggestion-autocomplete",
+  "tips": [
+    "How will you store queries to support prefix-based lookup?",
+    "What data structure will you use for fast suggestions (Trie, inverted index, etc)? How will you keep it memory-efficient?",
+    "How do you handle large-scale writes (e.g., new searches per day)? Do you update the Trie/index in real time or in batches?"
+  ],
+  "resources": [
+    {
+      "title": "Good overview",
+      "url": "https://medium.com/double-pointer/system-design-interview-autocomplete-type-ahead-system-for-a-search-box-1ac968f9f121",
+      "kind": "article"
+    },
+    {
+      "title": "3 Approaches",
+      "url": "https://systemdesignschool.io/problems/typeahead/solution",
+      "kind": "article"
+    },
+    {
+      "title": "Great explanation",
+      "url": "https://www.youtube.com/watch?v=MCKX3n4-UR4",
+      "kind": "video"
+    }
   ]
 }

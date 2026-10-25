@@ -1,18 +1,18 @@
 {
   "id": "level-9",
   "actId": "act-2",
-  "order": 9,
+  "order": 10,
   "title": "News Feed",
   "difficulty": "hard",
   "summary": "Assemble a social home feed at scale by choosing between fan-out-on-write and fan-out-on-read.",
-  "narrative": "A news feed is a fan-out problem in disguise. When someone posts, that post has to surface in the home timeline of every one of their followers. There are two ways to make that happen. Fan-out-on-read assembles a timeline at read time by pulling recent posts from everyone you follow — cheap writes, but expensive, fan-heavy reads. Fan-out-on-write does the opposite: the moment a post is created, it's pushed into each follower's precomputed timeline, so reads are a single cache lookup.\n\nReads dominate a feed by orders of magnitude, so fan-out-on-write usually wins — but the write cost is brutal for popular accounts. A user with millions of followers would trigger millions of timeline inserts, and you cannot make the poster wait for that. So do it asynchronously: the web tier stores the post, drops a fan-out job on a queue, and returns immediately. A pool of workers drains the queue, reads the follow graph to find who should receive the post, and writes each follower's timeline into the cache.\n\nThat shapes the whole design. Posts live in a NoSQL store, the follow relationships live in a graph database built for traversing edges, precomputed timelines live in a cache, and workers behind a queue absorb the fan-out. A read then just pulls the ready-made timeline from cache. Build the write pipeline, the graph lookups, and the cache-fast read path.",
+  "narrative": "A news feed is a fan-out problem in disguise. When someone posts, that post has to surface in the home timeline of every one of their followers. There are two ways to make that happen. Fan-out-on-read assembles a timeline at read time by pulling recent posts from everyone you follow — cheap writes, but expensive, fan-heavy reads. Fan-out-on-write does the opposite: the moment a post is created, it's pushed into each follower's precomputed timeline, so reads are a single cache lookup.\n\nReads dominate a feed by orders of magnitude, so use a hybrid. Fan out on write for normal users: the web tier stores the post, drops a fan-out job on a queue, and returns immediately. Workers read the follow graph and update followers' cached timelines in batches. A celebrity with millions of followers skips that mass fan-out; merge their recent posts from the NoSQL post store at read time instead.\n\nThat shapes the whole design. Posts live in a NoSQL store, follow relationships live in a graph database, and precomputed timelines live in a cache. Cache each reader's followed-celebrity ids with their feed metadata so the web tier can fetch those posts directly from the store and merge and rank them with the cached timeline. After days away a feed may be stale or evicted: use cached follow ids to pull and rank recent posts, rebuilding that metadata through the worker/graph path on a miss. Partition posts and timelines by user, batch fan-out writes, and serve media through a CDN backed by blob storage.",
   "objectives": ["Fan-out on write vs read", "Async feed generation", "Timeline caching", "Storing the social graph"],
   "specs": {
     "functional": [
-      "Publish a post into its author's followers' feeds",
-      "Assemble and serve each user's home timeline",
+      "Publish normal users' posts through asynchronous, batched fan-out on write",
+      "Merge cached timelines with celebrity posts pulled from NoSQL at request time, then rank",
       "Store the follow graph and look up a user's followers",
-      "Precompute timelines asynchronously with workers"
+      "Precompute timelines and cache follow ids via workers; fall back to pull + rank after days away"
     ],
     "nonFunctional": [
       "Feed reads served from cache under 200 ms at p99",
@@ -20,13 +20,13 @@
       "Survive the loss of any single web server"
     ],
     "constraints": [
-      "Clients enter through the load balancer only",
+      "API traffic enters through the load balancer; media can be served through a CDN",
       "The post store is reachable only from the app tier"
     ],
     "budgetPerHr": 8.0,
     "latencyTargetMs": 300,
     "capacity": ["~10,000 posts/sec and ~100,000 feed reads/sec", "Hundreds of millions of follow edges"],
-    "tradeoff": "Fan-out-on-write trades expensive, asynchronous writes for cheap, cache-fast reads — the mirror image of fan-out-on-read.",
+    "tradeoff": "Hybrid fan-out keeps normal-user reads cheap without millions of writes per celebrity post. Pulling celebrity posts and rebuilding stale feeds costs more at read time, but avoids unbounded write amplification; batching, caching and partitioning contain the work.",
     "bonus": "Add a CDN to serve post media and static assets from close to each user."
   },
   "missions": [
@@ -75,10 +75,23 @@
       "message": "Fan-out Workers must pull their jobs from the durable Message Queue."
     }
   ],
-  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "worker", "cache", "nosql-database", "graph-database", "cdn"],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "worker", "cache", "nosql-database", "graph-database", "cdn", "blob-storage"],
   "hints": [
     "Reads must be cheap: Client → Load Balancer → Web Server → Cache serves a precomputed timeline. Run at least two Web Servers.",
-    "On a new post the Web Server drops a fan-out job on the Message Queue; Workers pull the job, read followers from the Graph Database, and write each timeline into the Cache.",
-    "Keep posts in the NoSQL store and the follow relationships in the Graph Database, and add a CDN to offload post media."
+    "For normal users, wire Web Server → Message Queue → Worker, then Worker → Graph Database and → Cache for batched fan-out and cached follow ids. Celebrity posts skip mass fan-out.",
+    "Connect each Web Server to NoSQL to store posts and pull celebrity posts for merging and ranking. A stale feed after days away falls back to pull + rank using cached follow ids, refreshed via the worker. Add Client → CDN → Blob Storage for media."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-facebooks-news-feed",
+  "tips": [
+    "How will you handle fanout: push model, pull model, or hybrid? How does the system change for a user with millions of friends/followers?",
+    "How will you fetch and score new content at scale - especially when a user opens the app after days?",
+    "How will you handle the scalability of writes and reads - e.g., batching, caching, partitioning?"
+  ],
+  "resources": [
+    {
+      "title": "Good solution",
+      "url": "https://www.hellointerview.com/learn/system-design/problem-breakdowns/fb-news-feed",
+      "kind": "article"
+    }
   ]
 }
