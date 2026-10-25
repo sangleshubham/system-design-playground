@@ -1,0 +1,132 @@
+{
+  "id": "level-18",
+  "actId": "act-3",
+  "order": 18,
+  "title": "Yelp / Nearby Friends",
+  "difficulty": "expert",
+  "summary": "Combine spatial business search with expiring live locations and WebSocket updates for nearby friends.",
+  "narrative": "Finding a restaurant and finding a moving friend both start with a point on a map, but their update patterns differ. Build nearby business search with filters and ranking for ~200 M businesses and ~100 K searches/s at peak, plus a real-time nearby-friends view. Business records change relatively slowly; mobile clients publish their latest location roughly every 30 seconds. The Client represents both the search UI and the device sending location updates.\n\nRoute business queries through a Load Balancer to redundant Web Servers. Use a Geospatial Index backed by quadtree or geohash cells to select candidates around latitude-longitude coordinates, including neighboring cells at boundaries, then filter by exact distance. Rebuild or refresh the static index periodically and fetch business details from SQL. Cache popular areas with keys that include filters and index version; rank candidates by distance, rating and preferences. An optional Search Index adds text retrieval and rating-based ranking within the spatial candidate set.\n\nRoute persistent connections through the Load Balancer to redundant WebSocket Servers. Store each user's latest coordinates and update timestamp in an in-memory Cache with a TTL, using spatial buckets or Redis GEO plus expiry metadata for nearby lookup. Filter expired members during queries and remove stale spatial entries during cleanup. Expire stale presence, enforce location-sharing permissions and fan out authorized location updates through Pub/Sub to friends' WebSocket connections; the Pub/Sub ↔ WebSocket loop represents event delivery between servers, not repeated republishing of the same event. Keep rapidly changing locations separate from the periodically refreshed business index, and add Monitoring to track stale locations and search failures.",
+  "objectives": ["Spatial candidate search", "Static vs moving locations", "TTL-based presence", "Pub/Sub & WebSocket fan-out"],
+  "specs": {
+    "functional": [
+      "Search nearby businesses by point, radius and filters; rank by distance, rating and user preferences",
+      "Use a quadtree/geohash Geospatial Index for candidates and SQL for business details",
+      "Refresh the static index periodically; cache popular areas with filter- and version-aware keys",
+      "Accept device locations about every 30 seconds over WebSockets; store latest coordinates and timestamps with TTL in Cache",
+      "Use spatial buckets for dynamic lookup and Pub/Sub to notify authorized friends across WebSocket Servers"
+    ],
+    "nonFunctional": [
+      "Handle ~100 K business searches/s at peak over ~200 M businesses",
+      "Keep nearby-friend results fresh and remove stale presence after TTL expiry",
+      "Survive an individual Web Server or WebSocket Server failure"
+    ],
+    "constraints": [
+      "Client business-data access must pass through Web Servers; forbid direct Client access to SQL or the Geospatial Index",
+      "Keep dynamic friend locations in expiring memory storage, separate from the static business index",
+      "Connect the Geospatial Index to Cache and WebSocket Servers to Pub/Sub",
+      "Enforce location-sharing permissions; check neighboring spatial cells and filter by exact distance"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 90,
+    "capacity": [
+      "~200 M businesses; ~100 K business searches/s at peak",
+      "Each active device publishes about once per 30 s: U active devices generate roughly U/30 location updates/s",
+      "Use bounded TTLs for latest locations and periodic refreshes for static spatial data"
+    ],
+    "tradeoff": "Coarse geohash cells improve cache reuse but require more candidate filtering; fine cells increase index and boundary-query work. Static index rebuilds favor read throughput, while expiring in-memory locations and Pub/Sub favor freshness for moving friends.",
+    "bonus": "Connect Web Servers to a Search Index for text and rating ranking, and add Monitoring for proximity search and live-location freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route searches and live connections through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance nearby-business searches" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "geo-index", "label": "Find spatial candidates in the Geospatial Index" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Fetch business details from SQL" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache results for popular areas" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "websocket-server", "label": "Route persistent location connections" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "cache", "label": "Store latest locations with TTL in Cache" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "pub-sub", "label": "Publish authorized location updates" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Deliver friend updates to WebSocket Servers" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Retrieve and rank text matches with the Search Index", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for search and location freshness", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "geo-index",
+      "message": "Clients must never query the Geospatial Index directly."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients must never access business details directly in SQL."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Business-detail access must pass through the Web Server tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers to keep business search available during an instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "websocket-server",
+      "message": "Run at least two WebSocket Servers so live locations are not tied to a single instance."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "geo-index",
+      "companionComponentId": "cache",
+      "message": "Connect the Geospatial Index to Cache for popular-area lookups."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "websocket-server",
+      "companionComponentId": "pub-sub",
+      "message": "Connect WebSocket Servers to Pub/Sub for location fan-out across instances."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "websocket-server", "geo-index", "sql-database", "cache", "search-index", "monitoring", "pub-sub"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect the app to Geospatial Index, SQL and Cache for spatial candidates, business details and hot-area results. Include neighboring cells before exact distance filtering.",
+    "Add Load Balancer → WebSocket Server, then WebSocket Server → Cache for TTL-based latest locations. Connect WebSocket Server → Pub/Sub and Pub/Sub → WebSocket Server to deliver authorized updates across instances without event echo loops.",
+    "Run two Web Servers and two WebSocket Servers. Wire each Web Server to the spatial index, SQL and Cache, and connect Geospatial Index → Cache. Wire both WebSocket Servers to Cache and Pub/Sub, and Pub/Sub back to both. Add Web Server → Search Index and → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-yelp-or-nearby-friends",
+  "tips": [
+    "How will you store location data? Will you use latitude-longitude, geohashing, or a spatial index (e.g., R-Tree, QuadTree)?",
+    "How do you handle different types of proximity services - static (e.g., restaurants) vs dynamic (e.g., friends or drivers that keep moving)?",
+    "What kind of caching would you implement for frequently accessed areas (e.g., popular cities)?",
+    "How will you rank and personalize results (e.g., by distance, rating, user preferences)?"
+  ],
+  "resources": [
+    {
+      "title": "Good overview (available for free after login)",
+      "url": "https://systemdesignschool.io/problems/yelp/solution",
+      "kind": "article"
+    },
+    {
+      "title": "Good video",
+      "url": "https://www.youtube.com/watch?v=yz1jtze4qr8",
+      "kind": "video"
+    },
+    {
+      "title": "High level summary (location proximity service)",
+      "url": "https://www.youtube.com/watch?v=M4lR_Va97cQ&t=884s",
+      "kind": "video"
+    },
+    {
+      "title": "To get a better intuition (location proximity service)",
+      "url": "http://youtube.com/watch?v=LHuhvvlFxA0",
+      "kind": "video"
+    }
+  ]
+}

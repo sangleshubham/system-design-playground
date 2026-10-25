@@ -1,0 +1,121 @@
+{
+  "id": "level-15",
+  "actId": "act-3",
+  "order": 15,
+  "title": "Twitter",
+  "difficulty": "easy",
+  "summary": "Scale tweet publishing, cached timelines of tweet IDs, and asynchronous search indexing.",
+  "narrative": "A tweet can reach a handful of followers or millions, while most users spend their time reading. Build Twitter with tweets of up to 280 characters plus media, following, a home timeline and tweet search. Plan for ~200 M daily active users and ~500 M tweets/day, about 6 K writes/s on average. Timeline reads are roughly 100 times writes, or ~600 K reads/s at that write rate.\n\nStore each tweet's ID, author ID, timestamp, text and media links as a durable NoSQL object. Home timelines in Redis contain ordered lists of tweet IDs, not copies of entire tweets; the Web Server hydrates those IDs from the tweet store. Partition tweets and timeline keys to spread traffic, use cursor pagination and keep redundant Cache instances with replication or failover for hot timelines. All API and tweet-store access goes through the Load Balancer and Web Server tier.\n\nPublishing appends a new-tweet event to a Message Queue. A Worker looks up followers in a Graph Database, pushes tweet IDs into ordinary authors' follower timelines and asynchronously indexes tweets for search. Deduplicate retries by tweet ID. For celebrity authors, avoid huge write fan-out and merge their recent tweets from the tweet store when a reader opens the timeline. Search may lag publication; optional media delivery uses a CDN backed by Blob Storage.",
+  "objectives": ["Tweet objects vs timeline IDs", "Hybrid fan-out", "Asynchronous search indexing", "Replicated timeline cache"],
+  "specs": {
+    "functional": [
+      "Post tweets up to 280 characters plus media links, follow accounts, read home timelines and search tweets",
+      "Store tweet ID, author ID, timestamp, text and media links in NoSQL",
+      "Keep ordered tweet-ID timelines in Redis and hydrate results from the tweet store",
+      "Queue new tweets; Workers look up followers, update timelines and populate the Search Index",
+      "Merge celebrity tweets at read time and paginate timelines with cursors"
+    ],
+    "nonFunctional": [
+      "Serve a read-heavy workload with ~100 timeline reads per tweet write",
+      "Keep durable tweets available when cached timelines must be rebuilt",
+      "Allow eventual consistency for fan-out and search indexing"
+    ],
+    "constraints": [
+      "Route clients through the Load Balancer; tweet-store access must pass through Web Servers",
+      "Replicate the timeline Cache and make Worker updates idempotent by tweet ID",
+      "Use the Message Queue to decouple publication from fan-out and indexing"
+    ],
+    "budgetPerHr": 6.0,
+    "latencyTargetMs": 140,
+    "capacity": [
+      "~200 M DAU; ~500 M tweets/day ≈ 6 K writes/s",
+      "Timeline reads ≈ 100× writes ≈ 600 K reads/s at the average write rate",
+      "Tweet text limit: 280 characters, with media stored separately"
+    ],
+    "tradeoff": "Tweet-ID timelines reduce duplication but require hydration. Push fan-out accelerates ordinary reads; pull-and-merge handles celebrity accounts with less write amplification. Asynchronous indexing makes search scalable at the cost of freshness.",
+    "bonus": "Connect Client → CDN → Blob Storage to deliver tweet media."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route clients through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance tweet and timeline requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Store tweet objects in NoSQL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read timelines of tweet IDs from Cache" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Queue new-tweet events" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch fan-out and indexing work" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "graph-database", "label": "Look up followers in the Graph Database" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "cache", "label": "Push tweet IDs into follower timelines" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Index tweets for search" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Fetch tweet media through the CDN", "bonus": true },
+    { "id": "m11", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Serve tweet media from Blob Storage", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "Clients must enter the API through the Load Balancer."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients must never access the tweet store directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Tweet-store access must pass through the Web Server tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so tweet and timeline requests survive an instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "cache",
+      "message": "Run at least two Cache instances with replication or failover for timeline availability."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "worker",
+      "companionComponentId": "message-queue",
+      "message": "Connect the Worker to a Message Queue to buffer fan-out and indexing work."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "nosql-database", "cache", "message-queue", "worker", "graph-database", "search-index", "cdn", "blob-storage"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect the app to NoSQL for tweet objects and Cache for ordered lists of tweet IDs; hydrate timeline entries from NoSQL.",
+    "Connect Web Server → Message Queue → Worker, then Worker → Graph Database, Cache and Search Index. Push ordinary authors into follower timelines, but merge celebrity posts from the tweet store at read time.",
+    "Use two Web Servers and two Cache instances. Connect each Web Server and the Worker to both Cache replicas; connect each Web Server to NoSQL and the queue. Add Client → CDN → Blob Storage for media."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-twitter-for-millions-of-users",
+  "tips": [
+    "This question is similar to designing and scaling a social network. Similar concepts apply.",
+    "What data will you store for each tweet? (tweet ID, user ID, timestamp, text, media link, etc.)",
+    "How will you design for billions of tweets, millions of users, and high fan-out (e.g., accounts with millions of followers)?",
+    "How will you index tweets and store user timelines? (e.g., in separate timeline storage or as pointers to tweet objects?)",
+    "What will you cache (timelines? tweet metadata?) and where (e.g., Redis)?"
+  ],
+  "resources": [
+    {
+      "title": "Good overview",
+      "url": "https://hayksimonyan.substack.com/p/system-design-interview-design-twitter",
+      "kind": "article"
+    },
+    {
+      "title": "Great video on social network design",
+      "url": "https://www.youtube.com/watch?v=S2y9_XYOZsg",
+      "kind": "video"
+    },
+    {
+      "title": "High level solution",
+      "url": "https://dev.to/zeeshanali0704/designing-twitter-a-system-design-interview-question-221e",
+      "kind": "article"
+    }
+  ]
+}

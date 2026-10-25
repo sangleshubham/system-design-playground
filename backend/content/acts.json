@@ -10,5 +10,11 @@
     "order": 2,
     "title": "Async & Real-Time",
     "description": "Decouple with queues, push updates in real time, and tame the systems that must never sleep or drop a message."
+  },
+  {
+    "id": "act-3",
+    "order": 3,
+    "title": "Social, Media & Places",
+    "description": "Photo feeds, timelines, file sync, calendars and location search — the classic product-design interview questions."
   }
 ]

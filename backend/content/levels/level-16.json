@@ -1,0 +1,121 @@
+{
+  "id": "level-16",
+  "actId": "act-3",
+  "order": 16,
+  "title": "Dropbox / Google Drive",
+  "difficulty": "medium",
+  "summary": "Sync large files across devices using content-addressed chunks, consistent metadata and change notifications.",
+  "narrative": "A user edits a file on a laptop and expects the change to appear on a phone without uploading the entire file again. Build Dropbox / Google Drive with folders, sharing, upload/download of files up to 50 GB and cross-device sync. Split files into ~4 MB chunks addressed by content hash: a 50 GB file contains roughly 12,500 chunks using decimal units. Hashes enable deduplication, resumable uploads and delta sync of changed chunks.\n\nStore the folder tree using parent_id, file-to-ordered-chunk mappings, sharing permissions and version metadata in a strongly consistent SQL Database sharded by user or namespace. Keep chunk bytes in Blob Storage replicated across regions. Web Servers authorize access, issue presigned chunk upload URLs and commit a new version only after required chunks exist; file bytes bypass the app servers. The Web Server → Blob Storage edge represents signing and commit checks, while clients can upload directly to storage and download through the CDN.\n\nA Load Balancer distributes API requests across redundant Web Servers, which use replicated SQL metadata. Use conditional version commits to detect concurrent edits and preserve a conflict copy rather than silently losing an update; readers see a committed version and can retry a lagging regional blob replica. Publish committed file changes through Pub/Sub to WebSocket Servers, reached by devices through the Load Balancer. Push is a notification to fetch authoritative changes, with version cursors for reconnect catch-up. An optional metadata Cache must respect versions and permissions; Monitoring can expose replication and sync lag.",
+  "objectives": ["Content-addressed chunks", "Consistent file metadata", "Direct uploads & CDN reads", "Cross-device sync"],
+  "specs": {
+    "functional": [
+      "Upload and download files up to 50 GB; support folders, sharing and cross-device sync",
+      "Split files into ~4 MB content-hashed chunks for deduplication, resume and delta sync",
+      "Store parent_id folder trees, ordered chunk lists, versions and sharing permissions in SQL; keep chunk bytes in Blob Storage",
+      "Authorize and sign direct chunk uploads in the app; commit metadata after chunk availability checks",
+      "Publish committed changes through Pub/Sub and WebSockets; reconcile missed changes using version cursors"
+    ],
+    "nonFunctional": [
+      "Keep metadata strongly consistent within a namespace and detect concurrent edits",
+      "Replicate chunks across regions and tolerate metadata replica failure",
+      "Transfer file bytes independently of app-server capacity"
+    ],
+    "constraints": [
+      "Client metadata access must pass through Web Servers; route the device sync channel through the Load Balancer",
+      "Allow presigned Client → Blob Storage uploads; use the CDN for downloads",
+      "Commit complete versions atomically and enforce sharing permissions before issuing storage access",
+      "Replicate SQL metadata with coordinated leadership; readers must handle lagging regional chunk replicas"
+    ],
+    "budgetPerHr": 4.5,
+    "latencyTargetMs": 90,
+    "capacity": [
+      "Maximum file size: 50 GB; chunk size: ~4 MB",
+      "A 50 GB file has roughly 12,500 chunks with decimal units; delta sync transfers changed chunks only",
+      "Shard metadata by user/namespace; replicate chunk storage across regions"
+    ],
+    "tradeoff": "Content hashing saves storage and bandwidth but requires chunk manifests and safe garbage collection. Strong metadata consistency simplifies version commits, while asynchronous regional blob replication requires lag-aware reads. Deduplication must not expose another user's private content.",
+    "bonus": "Connect Web Servers to a metadata Cache with version-aware invalidation and add Monitoring for sync and replication failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route API and sync traffic through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance file metadata requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store file and folder metadata in SQL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Authorize chunk uploads and verify commits" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Download file chunks through the CDN" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Fetch chunks from Blob Storage" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "pub-sub", "label": "Publish committed file changes" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Deliver change events to WebSocket Servers" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "websocket-server", "label": "Route device sync connections to WebSocket Servers" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache versioned file metadata", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for sync and replication lag", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients must never access file metadata directly in SQL."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "File metadata access must pass through the Web Server tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so metadata and upload authorization survive an instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "sql-database",
+      "message": "Replicate SQL metadata across at least two database instances for failover."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "blob-storage",
+      "companionComponentId": "cdn",
+      "message": "Connect Blob Storage to a CDN for efficient chunk downloads."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "websocket-server", "sql-database", "blob-storage", "pub-sub", "cache", "monitoring", "cdn"],
+  "hints": [
+    "Separate file bytes from metadata: connect Client → Load Balancer → Web Server → SQL, and Client → CDN → Blob Storage for downloads. Store folder parents, ordered chunk hashes and versions in SQL.",
+    "Connect Web Server → Blob Storage for presigned upload authorization and commit checks; file bytes can upload directly to storage. Publish Web Server → Pub/Sub → WebSocket Server and connect Load Balancer → WebSocket Server for device sync.",
+    "Run two Web Servers and two SQL replicas, connecting each app replica to both database instances, Blob Storage and Pub/Sub. Add Web Server → Cache and → Monitoring; use version checks to invalidate metadata and resolve concurrent edits."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-dropbox-or-google-drive",
+  "tips": [
+    "How to partition data and scale it?",
+    "How to structure data as folders and files?",
+    "How to do writes and reads with partitions and replication.",
+    "How do you replicate data globally across data centers?",
+    "When an update happens, how does it propagate across replicas? What do other readers see?"
+  ],
+  "resources": [
+    {
+      "title": "Paper: Google File System",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/gfs-sosp2003.pdf",
+      "kind": "paper"
+    },
+    {
+      "title": "Solution from ex-Meta Engineer",
+      "url": "https://www.youtube.com/watch?v=_UZ1ngy-kOI",
+      "kind": "video"
+    },
+    {
+      "title": "Dropbox problem breakdown",
+      "url": "https://www.hellointerview.com/learn/system-design/problem-breakdowns/dropbox",
+      "kind": "article"
+    },
+    {
+      "title": "Mock Interview",
+      "url": "https://www.tryexponent.com/courses/system-design-interviews/design-dropbox",
+      "kind": "course"
+    }
+  ]
+}

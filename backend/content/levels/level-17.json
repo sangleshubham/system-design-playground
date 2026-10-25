@@ -1,0 +1,124 @@
+{
+  "id": "level-17",
+  "actId": "act-3",
+  "order": 17,
+  "title": "Google Calendar",
+  "difficulty": "medium",
+  "summary": "Model recurring events and free/busy queries while delivering reliable reminders and live calendar updates.",
+  "narrative": "Creating a meeting should update the calendar immediately, invite its attendees and send reminders at the right time. Build Google Calendar with event creation and edits, invitations, recurring events, free/busy lookup and live updates. Store events(id, owner, start, end, tz, rrule), attendees and exceptions for individual occurrence overrides in SQL. Preserve the event's time zone so recurrence follows local wall time across daylight-saving transitions.\n\nStore the RRULE instead of materializing an infinite series. Expand occurrences only for the requested time window and apply cancellations or overrides before returning them. For stored nonrecurring or expanded intervals, free/busy uses start < :windowEnd AND end > :windowStart with a (user, start) index and an end-time filter, bounding the scan with start > :windowStart − max event duration; recurring masters must first be expanded. Cache expanded calendar views and free/busy results, invalidating affected windows when events or attendee state change.\n\nClients reach redundant Web Servers through a Load Balancer. Register reminder jobs with a Task Scheduler; due jobs enter a Message Queue and Workers deliver invitations and reminders through the Notification Service. Version jobs so edits and cancellations suppress obsolete sends, deduplicate retries and route exhausted failures to a Dead Letter Queue. The UI applies optimistic edits and reconciles server acknowledgments; optional Pub/Sub and WebSockets push authoritative updates across devices.",
+  "objectives": ["RRULE & occurrence exceptions", "Indexed free/busy queries", "Queued reminders", "Optimistic UI reconciliation"],
+  "specs": {
+    "functional": [
+      "Create and edit events, invite attendees, query free/busy and send reminders",
+      "Store events(id, owner, start, end, tz, rrule), attendees and occurrence exceptions in SQL",
+      "Expand RRULE occurrences within the requested window, preserving time zone rules and applying overrides",
+      "Find overlapping concrete intervals with start < :windowEnd AND end > :windowStart using a (user, start) index",
+      "Cache expanded views and free/busy; register scheduled notification jobs and reconcile optimistic UI edits with server state"
+    ],
+    "nonFunctional": [
+      "Keep event writes durable and calendar reads consistent with invalidation",
+      "Deliver invitations and reminders asynchronously with idempotent retries",
+      "Continue API service after a Web Server failure"
+    ],
+    "constraints": [
+      "Client SQL access must pass through the Web Server tier",
+      "Route notifications through Task Scheduler → Message Queue → Worker → Notification Service, outside the request path",
+      "Connect the SQL store to Cache and the Message Queue to a Dead Letter Queue",
+      "Expand recurrences for a bounded window; cancel or invalidate obsolete reminder jobs after event edits"
+    ],
+    "budgetPerHr": 5.0,
+    "latencyTargetMs": 250,
+    "capacity": [
+      "Bound occurrence expansion and free/busy queries to the requested time window",
+      "Index intervals by (user, start), filter by end and cache repeated window queries",
+      "Store one recurrence rule plus exceptions rather than an unbounded sequence of rows"
+    ],
+    "tradeoff": "Storing RRULEs avoids unbounded event rows but shifts expansion and time-zone handling to reads. Cached windows reduce repeated work and require invalidation. Queued reminders survive transient failures but need deduplication and checks against edited or cancelled events.",
+    "bonus": "Connect Web Server → Pub/Sub → WebSocket Server to push authoritative changes and reconcile optimistic edits across devices."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route clients through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance calendar API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store events and attendee state in SQL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache expanded views and free/busy results" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Register reminder jobs with the Task Scheduler" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "message-queue", "label": "Queue due notification jobs" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch notification jobs to Workers" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Send invitations and reminders" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "pub-sub", "label": "Publish calendar changes through Pub/Sub", "bonus": true },
+    { "id": "m10", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Push live calendar updates over WebSockets", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients must never access calendar records directly in SQL."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Calendar data access must pass through the Web Server tier."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "notification-service",
+      "message": "Reminders go through the scheduler and queue, not the request path."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so a single instance failure does not interrupt calendar access."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "sql-database",
+      "companionComponentId": "cache",
+      "message": "Connect SQL to Cache for expanded calendar views and free/busy results."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "Connect the Message Queue to a Dead Letter Queue for exhausted notification retries."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "cache", "task-scheduler", "message-queue", "worker", "notification-service", "dead-letter-queue", "pub-sub", "websocket-server"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server, with app connections to SQL and Cache. Store RRULEs and exceptions in SQL; expand only the requested window and cache the resulting intervals.",
+    "Keep reminder delivery off the request path: connect Web Server → Task Scheduler → Message Queue → Worker → Notification Service. Connect the queue to a Dead Letter Queue and Cache to SQL.",
+    "Run two Web Servers, each connected to SQL, Cache and Task Scheduler. Add Web Server → Pub/Sub → WebSocket Server for live updates; reconcile optimistic UI state with authoritative pushes and suppress reminder jobs for obsolete event versions."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-google-calendar",
+  "tips": [
+    "Backend: How to structure the data? How to query free times in SQL? How would you store recurring events?",
+    "Frontend: How will you structure the Calendar UI? When you add a new event, how does the UI show the change?"
+  ],
+  "resources": [
+    {
+      "title": "Good High Level Solution",
+      "url": "https://medium.com/%40astha2798/system-design-google-calendar-94894ddc9839",
+      "kind": "article"
+    },
+    {
+      "title": "Solution from FAANG Engineer",
+      "url": "https://www.youtube.com/watch?v=POfW0UULcyA",
+      "kind": "video"
+    },
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/post/305654/system-design-google-calendar-by-kthtes-ttur/",
+      "kind": "discussion"
+    },
+    {
+      "title": "Recurring Events",
+      "url": "https://www.linkedin.com/pulse/tiny-system-design-google-calendar-like-app-recurring-rajesh-pillai/",
+      "kind": "article"
+    }
+  ]
+}

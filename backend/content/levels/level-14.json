@@ -1,0 +1,127 @@
+{
+  "id": "level-14",
+  "actId": "act-3",
+  "order": 14,
+  "title": "Instagram",
+  "difficulty": "easy",
+  "summary": "Build a photo and video sharing service with fast media delivery and a hybrid home feed.",
+  "narrative": "A photo upload should appear in followers' home feeds without slowing down a scrolling session. Build Instagram for ~500 M daily active users: upload photos and videos, follow users, and fetch a cursor-paginated feed of followed accounts. At ~100 M uploads/day and an average photo size of ~2 MB, originals alone add ~200 TB/day before replication and derived variants. Reads dominate, and a home feed should load in under 200 ms.\n\nKeep original media and resized thumbnail, feed and full-size variants in Blob Storage, while a NoSQL Database stores post IDs, authors, timestamps and media pointers. Clients fetch media through the CDN and send API requests through a Load Balancer to redundant Web Servers. This design proxies original uploads through the app tier and delivers images through the CDN. Presigned direct-to-storage uploads are also a valid architecture, outside this chosen topology. The UI loads appropriately sized images, lazy-loads below the fold and prefetches the next page.\n\nAfter accepting an upload, publish a new-post event to a Message Queue. Redundant Workers generate media variants and fan out ordinary authors' post IDs into cached follower feeds; retries must not duplicate entries. Celebrity posts are not pushed to millions of feeds: merge their recent posts from the post store at read time. A Graph Database can supply follower lookups, and Monitoring can track processing lag and delivery failures.",
+  "objectives": ["Media variants & CDN", "Cursor-paginated feeds", "Hybrid fan-out", "Asynchronous processing"],
+  "specs": {
+    "functional": [
+      "Upload photos and videos; follow users and scroll a cursor-paginated home feed",
+      "Store originals and resized variants in Blob Storage; keep post metadata and media pointers in NoSQL",
+      "Serve thumbnail, feed and full-size variants through the CDN; lazy-load and prefetch images in the UI",
+      "Queue new-post events for Workers to resize media and update cached follower feeds",
+      "Push ordinary posts into feeds; merge celebrity posts from the post store at read time"
+    ],
+    "nonFunctional": [
+      "Load the home feed in under 200 ms",
+      "Scale a heavily read-dominant workload and keep media durable",
+      "Continue API service and background processing after a single instance failure"
+    ],
+    "constraints": [
+      "Route API requests through the Load Balancer and Web Server tier",
+      "Proxy uploads through the app in this design and deliver media through the CDN; presigned direct uploads are an alternative outside this topology",
+      "Access post metadata through the Web Server tier; deduplicate retried feed updates"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 150,
+    "capacity": [
+      "~500 M DAU; ~100 M uploads/day ≈ 1,160 uploads/s on average",
+      "~2 MB average photo → ~200 TB/day of originals before replication and resized variants"
+    ],
+    "tradeoff": "Precomputed feeds make reads cheap but amplify writes; merging celebrity posts on read avoids enormous fan-out. Resized CDN variants use extra storage to reduce bandwidth and image load time.",
+    "bonus": "Connect Workers to a Graph Database for follower lookup and add Monitoring for feed and media processing."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Fetch media through the CDN" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Serve media from Blob Storage" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route API requests through the Load Balancer" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance requests across Web Servers" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Store original media in Blob Storage" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Store post metadata in NoSQL" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read cached home feeds" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Queue new-post events" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch media and feed work" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Write resized media variants" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "cache", "label": "Fan out post IDs into follower feeds" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "worker", "toComponentId": "graph-database", "label": "Look up followers in the Graph Database", "bonus": true },
+    { "id": "m13", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for media and feed processing", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "blob-storage",
+      "message": "Images reach users through the CDN; this design routes uploads through the app tier."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "web-server",
+      "message": "API requests must enter through the Load Balancer."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Post metadata access must pass through the Web Server tier."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers to keep uploads and feeds available during an instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so media processing and fan-out survive an instance failure."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "blob-storage",
+      "companionComponentId": "cdn",
+      "message": "Connect Blob Storage to the CDN for efficient media delivery."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "blob-storage", "load-balancer", "web-server", "nosql-database", "cache", "message-queue", "worker", "graph-database", "monitoring"],
+  "hints": [
+    "Separate media bytes from post metadata: use Client → CDN → Blob Storage for delivery and Client → Load Balancer → Web Server for API calls. Store originals through Web Server → Blob Storage and metadata through Web Server → NoSQL.",
+    "Connect Web Server → Cache for feeds and Web Server → Message Queue → Worker for new posts. Connect Worker → Blob Storage for resized variants and → Cache for ordinary-author fan-out; merge celebrity posts from NoSQL at read time.",
+    "Run two Web Servers and two Workers, wiring each replica to the same dependencies. Connect Workers to a Graph Database for follower lookup and Web Servers to Monitoring. Keep all client metadata access behind the app and image delivery through the CDN."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-instagram",
+  "tips": [
+    "How do you store billions of photos and videos reliably?",
+    "How do you ensure efficient retrieval when scrolling through a feed?",
+    "How do you optimize the UI to load the image fast?",
+    "How do you cache popular posts and feeds?",
+    "How do you handle fan-out to millions of followers for a celebrity post?"
+  ],
+  "resources": [
+    {
+      "title": "Good overview",
+      "url": "https://www.designgurus.io/course-play/grokking-the-system-design-interview/doc/designing-instagram",
+      "kind": "course"
+    },
+    {
+      "title": "Interesting discussion",
+      "url": "https://www.reddit.com/r/leetcode/comments/1dva2ng/rate_my_system_design_for_instagram/",
+      "kind": "discussion"
+    },
+    {
+      "title": "Good summary at the very end",
+      "url": "https://www.linkedin.com/pulse/instagram-system-design-blueprint-crack-faang-rocky-bhatia-w4jtc/",
+      "kind": "article"
+    },
+    {
+      "title": "Great video on social network design",
+      "url": "https://www.youtube.com/watch?v=S2y9_XYOZsg",
+      "kind": "video"
+    }
+  ]
+}
