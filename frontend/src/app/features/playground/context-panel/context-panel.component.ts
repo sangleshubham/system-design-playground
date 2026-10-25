@@ -1,6 +1,33 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  input,
+  linkedSignal,
+  output,
+} from '@angular/core';
 import { PlaygroundStore } from '../state/playground.store.js';
 import { AppIcon } from '../../../shared/app-icon.component.js';
+import type { ResourceKind } from '../../../core/models.js';
+
+type PanelTab = 'brief' | 'read';
+
+const RESOURCE_GROUPS: { kind: ResourceKind; title: string }[] = [
+  { kind: 'article', title: 'Articles' },
+  { kind: 'video', title: 'Videos' },
+  { kind: 'paper', title: 'Papers' },
+  { kind: 'discussion', title: 'Discussions' },
+  { kind: 'course', title: 'Courses' },
+];
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
 
 /**
  * The right-hand context panel: the challenge narrative, collapsible spec sections, the
@@ -41,6 +68,25 @@ export class ContextPanelComponent {
   readonly missionProgress = this.store.missionProgress;
   readonly revealedHintCount = this.store.revealedHintCount;
 
+  readonly activeTab = linkedSignal({
+    source: computed(() => this.level()?.id),
+    computation: (): PanelTab => 'brief',
+  });
+
+  readonly tips = computed(() => this.level()?.tips ?? []);
+  readonly resources = computed(() => this.level()?.resources ?? []);
+  readonly resourceGroups = computed(() =>
+    RESOURCE_GROUPS.map((group) => ({
+      ...group,
+      resources: this.resources()
+        .filter((resource) => resource.kind === group.kind)
+        .map((resource) => ({
+          ...resource,
+          host: hostOf(resource.url),
+        })),
+    })).filter((group) => group.resources.length > 0),
+  );
+
   readonly narrativeParagraphs = computed(() =>
     (this.level()?.narrative ?? '').split('\n\n').map((p) => p.trim()).filter(Boolean),
   );
@@ -63,5 +109,12 @@ export class ContextPanelComponent {
 
   revealHint(): void {
     this.store.revealNextHint();
+  }
+
+  onTabKeydown(event: KeyboardEvent, tab: PanelTab, target: HTMLButtonElement): void {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    this.activeTab.set(tab);
+    target.focus();
   }
 }

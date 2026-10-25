@@ -4,6 +4,15 @@ import { ICONS } from './icon.registry';
 // US3 + US5 (contract C5): the toolbar icons must exist and the fit/fullscreen glyphs must
 // differ — the original bug was two near-identical corner-bracket SVGs that read as one glyph.
 describe('icon registry', () => {
+  it('defines distinct stroke-based icons for all reading resource kinds', () => {
+    const names = ['article', 'video', 'paper', 'discussion', 'course'];
+    for (const name of names) {
+      expect(ICONS[name]).toMatch(/^<svg /);
+      expect(ICONS[name]).toContain('stroke="currentColor"');
+    }
+    expect(new Set(names.map((name) => ICONS[name])).size).toBe(names.length);
+  });
+
   it('defines the canvas-control entries fit, fullscreen, fullscreen-exit, key, check', () => {
     for (const name of ['fit', 'fullscreen', 'fullscreen-exit', 'key', 'check']) {
       expect(ICONS[name], `icon "${name}" should be registered`).toBeTruthy();

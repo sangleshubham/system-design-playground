@@ -175,15 +175,19 @@ export class PlaygroundPage {
 
   /** Resolve the next level by global order (feature 007: every level is open). */
   private loadNextLevel(order: number): void {
+    const id = this.levelId;
     this.contentApi
       .getMap()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (map) => {
+          if (this.levelId !== id) return;
           const next = map.acts.flatMap((a) => a.levels).find((l) => l.order === order + 1);
           this.nextLevelId.set(next?.id ?? null);
         },
-        error: () => this.nextLevelId.set(null),
+        error: () => {
+          if (this.levelId === id) this.nextLevelId.set(null);
+        },
       });
   }
 

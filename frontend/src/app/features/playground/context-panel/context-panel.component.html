@@ -18,118 +18,204 @@
       }
     </section>
 
-    <!-- The Challenge -->
-    <section class="block">
-      <h3>The Challenge</h3>
-      @for (para of narrativeParagraphs(); track $index) {
-        <p class="narrative">{{ para }}</p>
-      }
-      @if (lvl.objectives.length) {
-        <div class="chips">
-          @for (obj of lvl.objectives; track obj) {
-            <span class="chip">{{ obj }}</span>
-          }
-        </div>
-      }
-    </section>
-
-    <!-- Mission checklist -->
-    <section class="block">
-      <div class="missions-head">
-        <h3>Missions</h3>
-        <span class="counter">{{ missionProgress().label }}</span>
-      </div>
-      <ul class="missions">
-        @for (m of missionStates(); track m.mission.id) {
-          <li class="mission" [class.done]="m.satisfied" [class.bonus]="m.mission.bonus">
-            <span class="checkbox" [class.checked]="m.satisfied">
-              @if (m.satisfied) {
-                <app-icon name="check" />
-              }
-            </span>
-            <span class="mission-label">{{ m.mission.label }}</span>
-            @if (m.mission.bonus) {
-              <span class="bonus-star" title="Bonus"><app-icon name="star" /></span>
-            }
-          </li>
+    <div class="tabs" role="tablist" aria-label="Level context">
+      <button
+        #briefTab
+        id="context-brief-tab"
+        type="button"
+        role="tab"
+        aria-controls="context-brief-panel"
+        [attr.aria-selected]="activeTab() === 'brief'"
+        [tabIndex]="activeTab() === 'brief' ? 0 : -1"
+        (click)="activeTab.set('brief')"
+        (keydown)="onTabKeydown($event, 'read', readTab)"
+      >
+        Brief
+      </button>
+      <button
+        #readTab
+        id="context-read-tab"
+        type="button"
+        role="tab"
+        aria-controls="context-read-panel"
+        [attr.aria-selected]="activeTab() === 'read'"
+        [tabIndex]="activeTab() === 'read' ? 0 : -1"
+        (click)="activeTab.set('read')"
+        (keydown)="onTabKeydown($event, 'brief', briefTab)"
+      >
+        Read
+        @if (resources().length) {
+          <span class="chip">{{ resources().length }}</span>
         }
-      </ul>
-    </section>
+      </button>
+    </div>
 
-    <!-- Specs -->
-    <section class="block">
-      <h3>Design Spec</h3>
+    <div
+      id="context-brief-panel"
+      role="tabpanel"
+      aria-labelledby="context-brief-tab"
+      tabindex="0"
+      [hidden]="activeTab() !== 'brief'"
+    >
+      <!-- The Challenge -->
+      <section class="block">
+        <h3>The Challenge</h3>
+        @for (para of narrativeParagraphs(); track $index) {
+          <p class="narrative">{{ para }}</p>
+        }
+        @if (lvl.objectives.length) {
+          <div class="chips">
+            @for (obj of lvl.objectives; track obj) {
+              <span class="chip">{{ obj }}</span>
+            }
+          </div>
+        }
+      </section>
 
-      <details open>
-        <summary>Functional</summary>
-        <ul class="spec-list">
-          @for (s of lvl.specs.functional; track s) {
-            <li>{{ s }}</li>
-          }
-        </ul>
-      </details>
-
-      <details>
-        <summary>Non-Functional</summary>
-        <ul class="spec-list">
-          @for (s of lvl.specs.nonFunctional; track s) {
-            <li>{{ s }}</li>
-          }
-        </ul>
-      </details>
-
-      <details>
-        <summary>Constraints</summary>
-        <ul class="spec-list">
-          @for (s of lvl.specs.constraints; track s) {
-            <li>{{ s }}</li>
-          }
-        </ul>
-      </details>
-
-      <details open>
-        <summary>Budget</summary>
-        <p class="spec-inline budget">{{ budgetLabel() }}</p>
-      </details>
-
-      <details>
-        <summary>Capacity</summary>
-        <ul class="spec-list">
-          @for (s of lvl.specs.capacity; track s) {
-            <li>{{ s }}</li>
-          }
-        </ul>
-      </details>
-
-      <details>
-        <summary>Key Trade-off</summary>
-        <p class="spec-inline">{{ lvl.specs.tradeoff }}</p>
-      </details>
-
-      @if (lvl.specs.bonus) {
-        <details>
-          <summary>Bonus</summary>
-          <p class="spec-inline">{{ lvl.specs.bonus }}</p>
-        </details>
-      }
-    </section>
-
-    <!-- Hints -->
-    <section class="block">
-      <h3>Hints <span class="free">(free)</span></h3>
-      @for (hint of revealedHints(); track $index) {
-        <div class="hint">
-          <span class="hint-num">{{ $index + 1 }}</span>
-          <span>{{ hint }}</span>
+      <!-- Mission checklist -->
+      <section class="block">
+        <div class="missions-head">
+          <h3>Missions</h3>
+          <span class="counter">{{ missionProgress().label }}</span>
         </div>
+        <ul class="missions">
+          @for (m of missionStates(); track m.mission.id) {
+            <li class="mission" [class.done]="m.satisfied" [class.bonus]="m.mission.bonus">
+              <span class="checkbox" [class.checked]="m.satisfied">
+                @if (m.satisfied) {
+                  <app-icon name="check" />
+                }
+              </span>
+              <span class="mission-label">{{ m.mission.label }}</span>
+              @if (m.mission.bonus) {
+                <span class="bonus-star" title="Bonus"><app-icon name="star" /></span>
+              }
+            </li>
+          }
+        </ul>
+      </section>
+
+      <!-- Specs -->
+      <section class="block">
+        <h3>Design Spec</h3>
+
+        <details open>
+          <summary>Functional</summary>
+          <ul class="spec-list">
+            @for (s of lvl.specs.functional; track s) {
+              <li>{{ s }}</li>
+            }
+          </ul>
+        </details>
+
+        <details>
+          <summary>Non-Functional</summary>
+          <ul class="spec-list">
+            @for (s of lvl.specs.nonFunctional; track s) {
+              <li>{{ s }}</li>
+            }
+          </ul>
+        </details>
+
+        <details>
+          <summary>Constraints</summary>
+          <ul class="spec-list">
+            @for (s of lvl.specs.constraints; track s) {
+              <li>{{ s }}</li>
+            }
+          </ul>
+        </details>
+
+        <details open>
+          <summary>Budget</summary>
+          <p class="spec-inline budget">{{ budgetLabel() }}</p>
+        </details>
+
+        <details>
+          <summary>Capacity</summary>
+          <ul class="spec-list">
+            @for (s of lvl.specs.capacity; track s) {
+              <li>{{ s }}</li>
+            }
+          </ul>
+        </details>
+
+        <details>
+          <summary>Key Trade-off</summary>
+          <p class="spec-inline">{{ lvl.specs.tradeoff }}</p>
+        </details>
+
+        @if (lvl.specs.bonus) {
+          <details>
+            <summary>Bonus</summary>
+            <p class="spec-inline">{{ lvl.specs.bonus }}</p>
+          </details>
+        }
+      </section>
+
+      @if (tips().length) {
+        <section class="block">
+          <h3>Things to consider</h3>
+          <ul class="spec-list">
+            @for (tip of tips(); track $index) {
+              <li>{{ tip }}</li>
+            }
+          </ul>
+        </section>
       }
-      @if (hasMoreHints()) {
-        <button type="button" class="reveal" (click)="revealHint()">
-          Reveal {{ revealedHintCount() === 0 ? 'a hint' : 'the next hint' }}
-        </button>
-      } @else {
-        <p class="all-revealed">All hints revealed.</p>
+
+      <!-- Hints -->
+      <section class="block">
+        <h3>Hints <span class="free">(free)</span></h3>
+        @for (hint of revealedHints(); track $index) {
+          <div class="hint">
+            <span class="hint-num">{{ $index + 1 }}</span>
+            <span>{{ hint }}</span>
+          </div>
+        }
+        @if (hasMoreHints()) {
+          <button type="button" class="reveal" (click)="revealHint()">
+            Reveal {{ revealedHintCount() === 0 ? 'a hint' : 'the next hint' }}
+          </button>
+        } @else {
+          <p class="all-revealed">All hints revealed.</p>
+        }
+      </section>
+    </div>
+
+    <div
+      id="context-read-panel"
+      role="tabpanel"
+      aria-labelledby="context-read-tab"
+      tabindex="0"
+      [hidden]="activeTab() !== 'read'"
+    >
+      @for (group of resourceGroups(); track group.kind) {
+        <section class="block resource-group">
+          <h3>{{ group.title }}</h3>
+          <ul class="resource-list">
+            @for (resource of group.resources; track $index) {
+              <li class="resource">
+                <app-icon [name]="group.kind" aria-hidden="true" />
+                <div class="resource-copy">
+                  <a [href]="resource.url" target="_blank" rel="noopener noreferrer">
+                    {{ resource.title }}
+                  </a>
+                  <span class="resource-host">{{ resource.host }}</span>
+                </div>
+              </li>
+            }
+          </ul>
+        </section>
+      } @empty {
+        <p class="reading-empty">No reading list for this level yet.</p>
       }
-    </section>
+      @if (lvl.sourceUrl) {
+        <footer class="source-credit">
+          Question from
+          <a [href]="lvl.sourceUrl" target="_blank" rel="noopener noreferrer">systemdesign.io</a>
+        </footer>
+      }
+    </div>
   </div>
 }
