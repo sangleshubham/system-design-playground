@@ -1,13 +1,13 @@
 /**
  * Evaluation routes:
  *  POST /levels/:levelId/attempts — score the level's SAVED design, persist the attempt,
- *                                   and on a pass atomically record completion + unlock.
+ *                                   and on a pass atomically record completion.
  *  GET  /levels/:levelId/attempts — attempt history (newest first) + best total.
  */
 import { Router } from 'express';
 import type { AppDeps } from '../deps.js';
 import type { Attempt } from '../models/index.js';
-import { locked, notFound } from '../http/http-error.js';
+import { notFound } from '../http/http-error.js';
 import { evaluateDesign } from '../services/scoring/index.js';
 import { requireWorkspaceId } from '../auth/auth.middleware.js';
 
@@ -19,7 +19,6 @@ export function attemptsRouter(deps: AppDeps): Router {
     const workspaceId = requireWorkspaceId(res);
     const level = deps.content.getLevelById(req.params.levelId);
     if (!level) throw notFound(`Unknown level "${req.params.levelId}".`);
-    if (!deps.progress.isUnlocked(workspaceId, level)) throw locked('This level is locked.');
 
     // Evaluate whatever was last saved. An empty/absent design is a valid low score.
     const design = deps.db.designs.getByLevelId(workspaceId, level.id);
@@ -39,10 +38,7 @@ export function attemptsRouter(deps: AppDeps): Router {
     };
     const saved = deps.db.attempts.create(workspaceId, level.id, attempt);
 
-    let unlockedLevelId: string | null = null;
-    if (result.passed) {
-      unlockedLevelId = deps.progress.recordPass(workspaceId, level).unlockedLevelId;
-    }
+    if (result.passed) deps.progress.recordPass(workspaceId, level);
 
     res.json({
       attemptId: saved.id,
@@ -50,7 +46,6 @@ export function attemptsRouter(deps: AppDeps): Router {
       total: result.total,
       passed: result.passed,
       feedback: result.feedback,
-      ...(unlockedLevelId ? { unlockedLevelId } : {}),
     });
   });
 

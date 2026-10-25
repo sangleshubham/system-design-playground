@@ -1,7 +1,8 @@
 /**
  * Home view (FR-029): lab progress %, the "continue where you left off" card (the last
  * touched level + its saved design's timestamp), and the recommended next level (first
- * unlocked, uncompleted level by order). Nulls when N/A. See contracts/api.md GET /progress.
+ * uncompleted level by order; feature 007 removed the unlock chain). Nulls when N/A. See
+ * contracts/api.md GET /progress.
  */
 import { Router } from 'express';
 import type { AppDeps } from '../deps.js';
@@ -28,11 +29,10 @@ export function progressRouter(deps: AppDeps): Router {
       }
     }
 
-    // Recommended next: first unlocked, uncompleted level by global order (null if all done).
+    // Recommended next: first uncompleted level by global order (null if all done).
+    // `getLevels()` is already sorted by order.
     const completedIds = new Set(progress.completedLevelIds);
-    const next = levels.find(
-      (l) => l.order <= progress.unlockedThroughOrder && !completedIds.has(l.id),
-    );
+    const next = levels.find((l) => !completedIds.has(l.id));
     const recommendedNext = next ? { levelId: next.id, title: next.title } : null;
 
     res.json({

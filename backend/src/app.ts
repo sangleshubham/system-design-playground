@@ -38,7 +38,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
   contentService.load();
 
   const db = options.db ?? createDatabase();
-  const progress = new ProgressService(db, contentService);
+  const progress = new ProgressService(db);
 
   const aiConfig = options.aiConfig ?? loadAiConfig();
 

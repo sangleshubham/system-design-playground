@@ -7,7 +7,7 @@ import type { Difficulty, MapView } from '../../core/models.js';
 
 const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard', 'expert', 'legendary'];
 
-/** The `/lab` challenge map: acts, level cards, lock/unlock states, search + difficulty filters. */
+/** The `/lab` challenge map: acts, level cards, completion states, search + difficulty filters. */
 @Component({
   selector: 'app-lab-map-page',
   standalone: true,

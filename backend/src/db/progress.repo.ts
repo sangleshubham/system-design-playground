@@ -1,15 +1,18 @@
 /**
  * Repository for `progress` rows, one per workspace (feature 005, data-model.md § Progress).
- * A workspace's first read lazily seeds the first-run state (unlockedThroughOrder = 1, no
- * completions) — the same defaults the old singleton used, so a brand-new key sees a fresh
- * install (research R10). `update` is transactional so completion/unlock advances stay atomic.
+ * A workspace's first read lazily seeds the first-run state (no completions, no resume
+ * pointer), so a brand-new key sees a fresh install (research R10). `update` is transactional
+ * so completion stays atomic.
+ *
+ * Feature 007 removed the unlock chain. The legacy `unlocked_through_order` column is kept
+ * (NOT NULL in existing v2 databases, so dropping it would need a destructive migration) but
+ * is inert: seeded with 1 on insert and never read or updated.
  */
 import type { Database } from 'better-sqlite3';
 import type { Progress } from '../models/index.js';
 
 interface ProgressRow {
   workspace_id: string;
-  unlocked_through_order: number;
   last_touched_level_id: string | null;
   completed_level_ids: string;
 }
@@ -35,7 +38,6 @@ export class ProgressRepo {
   get(workspaceId: string): Progress {
     const row = this.ensureRow(workspaceId);
     return {
-      unlockedThroughOrder: row.unlocked_through_order,
       lastTouchedLevelId: row.last_touched_level_id,
       completedLevelIds: JSON.parse(row.completed_level_ids) as string[],
     };
@@ -45,14 +47,9 @@ export class ProgressRepo {
     this.ensureRow(workspaceId);
     this.db
       .prepare(
-        'UPDATE progress SET unlocked_through_order = ?, last_touched_level_id = ?, completed_level_ids = ? WHERE workspace_id = ?',
+        'UPDATE progress SET last_touched_level_id = ?, completed_level_ids = ? WHERE workspace_id = ?',
       )
-      .run(
-        progress.unlockedThroughOrder,
-        progress.lastTouchedLevelId,
-        JSON.stringify(progress.completedLevelIds),
-        workspaceId,
-      );
+      .run(progress.lastTouchedLevelId, JSON.stringify(progress.completedLevelIds), workspaceId);
   }
 
   /** Read-modify-write a workspace's progress row inside a single transaction. */

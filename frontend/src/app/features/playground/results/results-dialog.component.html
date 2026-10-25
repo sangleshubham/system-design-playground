@@ -84,7 +84,7 @@
   </div>
 
   <div class="actions">
-    @if (result().passed && result().unlockedLevelId) {
+    @if (result().passed && nextLevelId()) {
       <button type="button" class="btn primary" (click)="onNext()">Next level →</button>
     }
     <button type="button" class="btn ghost" (click)="dismiss.emit()">

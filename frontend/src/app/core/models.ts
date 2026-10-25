@@ -174,7 +174,6 @@ export interface AttemptResult {
   total: number;
   passed: boolean;
   feedback: DimensionFeedback[];
-  unlockedLevelId?: string;
 }
 
 /** GET /levels/:id — the full level plus the saved design (or null). */
@@ -182,7 +181,8 @@ export type LevelPayload = Level & { design: Design | null };
 
 /* --------- View models composed by the backend (map / home) --------- */
 
-export type LevelStatus = 'locked' | 'unlocked' | 'completed';
+/** Every level is open (feature 007 removed the unlock chain); passing marks it complete. */
+export type LevelStatus = 'unlocked' | 'completed';
 
 export interface MapLevelCard {
   id: string;
@@ -208,7 +208,7 @@ export interface MapAct {
 
 export interface MapView {
   acts: MapAct[];
-  totals: { completed: number; levels: number; unlockedThroughOrder: number };
+  totals: { completed: number; levels: number };
 }
 
 export interface HomeView {

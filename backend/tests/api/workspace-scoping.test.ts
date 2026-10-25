@@ -38,7 +38,7 @@ describe('workspace isolation (US3, obligations 1 & 5)', () => {
     // A builds up state: a sandbox design, a level design, an attempt, and progress.
     const sandbox = await a.post('/api/v1/sandbox/designs').send({ name: 'secret' });
     await saveLevel1(a);
-    await a.post('/api/v1/levels/level-1/attempts'); // passes → completes level-1, unlocks level-2
+    await a.post('/api/v1/levels/level-1/attempts'); // passes → completes level-1
 
     const { api: b } = mintWorkspace(app, db);
 
@@ -56,13 +56,12 @@ describe('workspace isolation (US3, obligations 1 & 5)', () => {
     expect(bAttempts.body.attempts).toEqual([]);
     expect(bAttempts.body.best).toBeNull();
 
-    // Progress: B is a fresh install — level-2 stays locked (A's pass didn't leak).
+    // Progress: B is a fresh install — level-1 is not completed for B (A's pass didn't leak).
     const bMap = await b.get('/api/v1/map');
     const bLevels = bMap.body.acts.flatMap((act: { levels: unknown[] }) => act.levels);
     const l1 = bLevels.find((l: { id: string }) => l.id === 'level-1');
-    const l2 = bLevels.find((l: { id: string }) => l.id === 'level-2');
     expect(l1.status).toBe('unlocked');
-    expect(l2.status).toBe('locked');
+    expect(l1.best).toBeNull();
     expect(bMap.body.totals.completed).toBe(0);
   });
 

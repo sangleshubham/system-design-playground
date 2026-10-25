@@ -1,21 +1,18 @@
 /**
- * Challenge map: composes acts → level cards with lock/unlock/completion status plus
- * lab-wide totals (data-model.md § Derived/View Models: MapView; contracts/api.md GET /map).
+ * Challenge map: composes acts → level cards with completion status plus lab-wide totals.
+ * Every level is open (feature 007 removed the unlock chain), so a card is 'unlocked' until
+ * passed, then 'completed' (data-model.md § Derived/View Models: MapView; contracts/api.md
+ * GET /map).
  */
 import { Router } from 'express';
 import type { AppDeps } from '../deps.js';
 import type { Level } from '../models/index.js';
 import { requireWorkspaceId } from '../auth/auth.middleware.js';
 
-type LevelStatus = 'locked' | 'unlocked' | 'completed';
+type LevelStatus = 'unlocked' | 'completed';
 
-function statusFor(
-  level: Level,
-  completedLevelIds: string[],
-  unlockedThroughOrder: number,
-): LevelStatus {
-  if (completedLevelIds.includes(level.id)) return 'completed';
-  return level.order <= unlockedThroughOrder ? 'unlocked' : 'locked';
+function statusFor(level: Level, completedLevelIds: string[]): LevelStatus {
+  return completedLevelIds.includes(level.id) ? 'completed' : 'unlocked';
 }
 
 export function mapRouter(deps: AppDeps): Router {
@@ -37,7 +34,7 @@ export function mapRouter(deps: AppDeps): Router {
           summary: level.summary,
           objectives: level.objectives,
           missionCount: level.missions.length,
-          status: statusFor(level, progress.completedLevelIds, progress.unlockedThroughOrder),
+          status: statusFor(level, progress.completedLevelIds),
           best: deps.db.attempts.bestByLevelId(workspaceId, level.id),
         }));
 
@@ -57,7 +54,6 @@ export function mapRouter(deps: AppDeps): Router {
       totals: {
         completed: progress.completedLevelIds.length,
         levels: levels.length,
-        unlockedThroughOrder: progress.unlockedThroughOrder,
       },
     });
   });

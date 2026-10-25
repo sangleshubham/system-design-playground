@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeApp, level1Solution } from '../helpers.js';
+import { makeApp, level1Solution, lastLevelId } from '../helpers.js';
 
 describe('GET /api/v1/levels/:levelId', () => {
   it('returns the full level with a null design on a fresh DB', async () => {
@@ -11,12 +11,13 @@ describe('GET /api/v1/levels/:levelId', () => {
     expect(res.body.design).toBeNull();
   });
 
-  it('returns 423 for a locked level and names the blocker', async () => {
+  it('a fresh workspace can open the LAST level by order (no unlock chain, feature 007)', async () => {
     const { api } = makeApp();
-    const res = await api.get('/api/v1/levels/level-3');
-    expect(res.status).toBe(423);
-    expect(res.body.error.code).toBe('locked');
-    expect(res.body.error.blockingLevelId).toBe('level-2');
+    const id = lastLevelId();
+    const res = await api.get(`/api/v1/levels/${id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(id);
+    expect(res.body.design).toBeNull();
   });
 
   it('returns 404 for an unknown level', async () => {
@@ -90,5 +91,19 @@ describe('PUT /api/v1/levels/:levelId/design', () => {
     expect(get.body.design.nodes).toHaveLength(4);
     expect(get.body.design.edges).toHaveLength(3);
     expect(get.body.design.revealedHintCount).toBe(1);
+  });
+
+  it('a fresh workspace can save a design on the LAST level by order (feature 007)', async () => {
+    const { api } = makeApp();
+    const id = lastLevelId();
+    const { nodes, edges } = level1Solution();
+    const put = await api
+      .put(`/api/v1/levels/${id}/design`)
+      .send({ nodes, edges, notes: [], revealedHintCount: 0 });
+    expect(put.status).toBe(200);
+    expect(typeof put.body.updatedAt).toBe('string');
+
+    const get = await api.get(`/api/v1/levels/${id}`);
+    expect(get.body.design.nodes).toHaveLength(4);
   });
 });

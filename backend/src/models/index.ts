@@ -323,7 +323,6 @@ export interface Attempt {
 
 export interface Progress {
   completedLevelIds: string[];
-  unlockedThroughOrder: number;
   lastTouchedLevelId: string | null;
 }
 

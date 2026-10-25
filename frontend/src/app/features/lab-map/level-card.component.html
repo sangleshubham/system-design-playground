@@ -1,19 +1,15 @@
 <div
   class="level-card card shadow-soft"
-  [class.locked]="card().status === 'locked'"
   [class.completed]="card().status === 'completed'"
   role="button"
   tabindex="0"
-  [attr.aria-disabled]="card().status === 'locked'"
   (click)="activate()"
   (keydown.enter)="activate()"
   (keydown.space)="onSpace($event)"
 >
   <div class="card-top">
     <span class="level-number">Level {{ card().order }}</span>
-    @if (card().status === 'locked') {
-      <app-icon name="lock" class="status-icon locked-icon" />
-    } @else if (card().status === 'completed') {
+    @if (card().status === 'completed') {
       <app-icon name="check" class="status-icon completed-icon" />
     }
   </div>

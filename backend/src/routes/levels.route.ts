@@ -1,12 +1,13 @@
 /**
  * Level playground routes:
- *  GET /levels/:levelId          — full level payload + saved design (or null); 423 locked, 404 unknown
+ *  GET /levels/:levelId          — full level payload + saved design (or null); 404 unknown.
+ *                                  Every level is open (feature 007: no unlock chain).
  *  PUT /levels/:levelId/design   — debounced-autosave upsert of the working canvas
  */
 import { Router } from 'express';
 import type { AppDeps } from '../deps.js';
 import { DesignUpsertRequestSchema } from '../models/index.js';
-import { badRequest, locked, notFound, sendStaleWrite } from '../http/http-error.js';
+import { badRequest, notFound, sendStaleWrite } from '../http/http-error.js';
 import { validateDesignGraph } from '../services/design-validation.js';
 import { requireWorkspaceId } from '../auth/auth.middleware.js';
 
@@ -18,16 +19,6 @@ export function levelsRouter(deps: AppDeps): Router {
     const level = deps.content.getLevelById(req.params.levelId);
     if (!level) throw notFound(`Unknown level "${req.params.levelId}".`);
 
-    if (!deps.progress.isUnlocked(workspaceId, level)) {
-      const blocker = deps.progress.blockingLevel(workspaceId, level);
-      throw locked(
-        blocker
-          ? `Complete "${blocker.title}" (level ${blocker.order}) to unlock this level.`
-          : 'This level is locked.',
-        { blockingLevelId: blocker?.id ?? null, blockingLevelOrder: blocker?.order ?? null },
-      );
-    }
-
     // Opening a level sets the resume pointer (FR-029).
     deps.progress.touch(workspaceId, level.id);
     const design = deps.db.designs.getByLevelId(workspaceId, level.id);
@@ -38,9 +29,6 @@ export function levelsRouter(deps: AppDeps): Router {
     const workspaceId = requireWorkspaceId(res);
     const level = deps.content.getLevelById(req.params.levelId);
     if (!level) throw notFound(`Unknown level "${req.params.levelId}".`);
-    if (!deps.progress.isUnlocked(workspaceId, level)) {
-      throw locked('This level is locked.');
-    }
 
     const parsed = DesignUpsertRequestSchema.safeParse(req.body);
     if (!parsed.success) {

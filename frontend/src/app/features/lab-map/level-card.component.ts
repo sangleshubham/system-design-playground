@@ -2,12 +2,11 @@ import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core
 import { Router } from '@angular/router';
 import { DifficultyBadge } from '../../shared/difficulty-badge.component.js';
 import { AppIcon } from '../../shared/app-icon.component.js';
-import { ToastService } from '../../core/toast.service.js';
 import type { MapLevelCard } from '../../core/models.js';
 
 /**
- * A single level card on the challenge map. Locked cards are dimmed and non-navigating
- * (click surfaces a toast); unlocked/completed cards navigate to the playground.
+ * A single level card on the challenge map. Every card navigates to its playground (feature
+ * 007 removed the unlock chain); completed cards show a check and the best score.
  */
 @Component({
   selector: 'app-level-card',
@@ -19,17 +18,11 @@ import type { MapLevelCard } from '../../core/models.js';
 })
 export class LevelCardComponent {
   private readonly router = inject(Router);
-  private readonly toast = inject(ToastService);
 
   readonly card = input.required<MapLevelCard>();
 
   activate(): void {
-    const card = this.card();
-    if (card.status === 'locked') {
-      this.toast.show(`Complete level ${card.order - 1} to unlock this level.`, 'info');
-      return;
-    }
-    this.router.navigate(['/playground', card.id]);
+    this.router.navigate(['/playground', this.card().id]);
   }
 
   onSpace(event: Event): void {

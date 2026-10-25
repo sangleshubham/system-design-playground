@@ -2,13 +2,6 @@
   @case ('loading') {
     <div class="state-screen"><p>Loading level…</p></div>
   }
-  @case ('locked') {
-    <div class="state-screen">
-      <h2>🔒 Level locked</h2>
-      <p>{{ lockedMessage() }}</p>
-      <a class="btn" routerLink="/lab">← Back to Lab</a>
-    </div>
-  }
   @case ('notfound') {
     <div class="state-screen">
       <h2>Level not found</h2>
@@ -67,6 +60,7 @@
               [nodeCount]="store.nodes().length"
               [edgeCount]="store.edges().length"
               [costPerHr]="currentCost()"
+              [nextLevelId]="nextLevelId()"
               (dismiss)="closeResult()"
               (next)="goToLevel($event)"
             />

@@ -87,7 +87,7 @@ function createSchemaV2(db: DatabaseType): void {
 
     CREATE TABLE IF NOT EXISTS progress (
       workspace_id           TEXT PRIMARY KEY REFERENCES workspaces(id),
-      unlocked_through_order INTEGER NOT NULL,
+      unlocked_through_order INTEGER NOT NULL, -- legacy, inert since feature 007
       last_touched_level_id  TEXT,
       completed_level_ids    TEXT NOT NULL
     );

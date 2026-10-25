@@ -91,7 +91,6 @@ export interface AiReviewGetResponse {
 
 export const AI_REVIEW_ERROR_CODES = [
   'level_not_found',
-  'level_locked',
   'design_empty',
   'design_too_large',
   'ai_review_in_flight',

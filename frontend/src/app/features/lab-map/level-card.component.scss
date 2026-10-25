@@ -20,16 +20,6 @@
     outline-offset: 2px;
   }
 
-  &.locked {
-    cursor: not-allowed;
-    opacity: 0.55;
-
-    &:hover {
-      box-shadow: var(--shadow-soft);
-      transform: none;
-    }
-  }
-
   &.completed {
     border-color: var(--color-success);
   }
@@ -51,10 +41,6 @@
 
 .status-icon {
   font-size: 1rem;
-}
-
-.locked-icon {
-  color: var(--text-muted);
 }
 
 .completed-icon {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeApp, loadContent } from '../helpers.js';
+import { makeApp, loadContent, level1Solution } from '../helpers.js';
 import { contentService } from '../../src/services/content.service.js';
 
 describe('GET /api/v1/progress', () => {
@@ -36,12 +36,38 @@ describe('GET /api/v1/progress', () => {
     const allIds = contentService.getLevels().map((l) => l.id);
     db.progress.save(workspaceId, {
       completedLevelIds: allIds,
-      unlockedThroughOrder: allIds.length + 1,
       lastTouchedLevelId: null,
     });
 
     const res = await api.get('/api/v1/progress');
     expect(res.body.lab).toEqual({ completed: 12, levels: 12, percent: 100 });
     expect(res.body.recommendedNext).toBeNull();
+  });
+
+  it('recommended next is the first uncompleted level by order, skipping completed ones', async () => {
+    loadContent();
+    const { api, db, workspaceId } = makeApp();
+    const byOrder = contentService.getLevels();
+    // Complete levels 1, 2 and 4 out of order: the gap at order 3 is recommended.
+    db.progress.save(workspaceId, {
+      completedLevelIds: [byOrder[3].id, byOrder[0].id, byOrder[1].id],
+      lastTouchedLevelId: null,
+    });
+
+    const res = await api.get('/api/v1/progress');
+    expect(res.body).not.toHaveProperty('unlockedThroughOrder');
+    expect(res.body.recommendedNext).toEqual({ levelId: byOrder[2].id, title: byOrder[2].title });
+  });
+
+  it('a real pass of level-1 moves recommended next to level-2', async () => {
+    const { api } = makeApp();
+    const { nodes, edges } = level1Solution();
+    await api
+      .put('/api/v1/levels/level-1/design')
+      .send({ nodes, edges, notes: [], revealedHintCount: 0 });
+    await api.post('/api/v1/levels/level-1/attempts');
+
+    const res = await api.get('/api/v1/progress');
+    expect(res.body.recommendedNext.levelId).toBe('level-2');
   });
 });

@@ -28,7 +28,7 @@ import { AppIcon } from '../../shared/app-icon.component.js';
 import { createAutosave, type AutosaveHandle } from './state/autosave.js';
 import type { AttemptResult, Design } from '../../core/models.js';
 
-type Status = 'loading' | 'ready' | 'locked' | 'notfound' | 'error';
+type Status = 'loading' | 'ready' | 'notfound' | 'error';
 
 @Component({
   selector: 'app-playground-page',
@@ -61,10 +61,11 @@ export class PlaygroundPage {
   private readonly destroyRef = inject(DestroyRef);
 
   readonly status = signal<Status>('loading');
-  readonly lockedMessage = signal('');
   readonly running = signal(false);
   readonly result = signal<AttemptResult | null>(null);
   readonly best = signal<number | null>(null);
+  /** The level after this one by global order (null on the last level) — "Next level" CTA. */
+  readonly nextLevelId = signal<string | null>(null);
   readonly aiReviewOpen = signal(false);
   /** GET .../ai-review availability (US3); optimistic default until the check resolves. */
   readonly aiAvailable = signal(true);
@@ -103,6 +104,7 @@ export class PlaygroundPage {
     this.levelId = id;
     this.status.set('loading');
     this.result.set(null);
+    this.nextLevelId.set(null);
 
     const catalog$ = this.store.catalog().length
       ? of(this.store.catalog())
@@ -125,12 +127,10 @@ export class PlaygroundPage {
           this.status.set('ready');
           this.loadBest(id);
           this.loadAiAvailability(id);
+          this.loadNextLevel(payload.order);
         },
         error: (err: unknown) => {
-          if (err instanceof HttpErrorResponse && err.status === 423) {
-            this.lockedMessage.set(err.error?.error?.message ?? 'This level is locked.');
-            this.status.set('locked');
-          } else if (err instanceof HttpErrorResponse && err.status === 404) {
+          if (err instanceof HttpErrorResponse && err.status === 404) {
             this.status.set('notfound');
           } else {
             this.status.set('error');
@@ -171,6 +171,20 @@ export class PlaygroundPage {
       .getAttempts(id)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({ next: (r) => this.best.set(r.best), error: () => this.best.set(null) });
+  }
+
+  /** Resolve the next level by global order (feature 007: every level is open). */
+  private loadNextLevel(order: number): void {
+    this.contentApi
+      .getMap()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (map) => {
+          const next = map.acts.flatMap((a) => a.levels).find((l) => l.order === order + 1);
+          this.nextLevelId.set(next?.id ?? null);
+        },
+        error: () => this.nextLevelId.set(null),
+      });
   }
 
   /** Disable the AI Review button proactively when the server reports it isn't configured

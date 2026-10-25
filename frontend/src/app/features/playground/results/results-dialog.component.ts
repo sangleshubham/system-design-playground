@@ -12,8 +12,8 @@ const DIMENSION_LABELS: Record<Dimension, string> = {
 
 /**
  * Modal shown after RUN: a total-score dial, five per-dimension bars with findings, and a
- * pass (≥ 90) celebration with a Next-level CTA or a fail state that keeps the canvas
- * intact for revision (US1 scenario 5).
+ * pass (≥ 90) celebration with a Next-level CTA (next level by order, when one exists) or a
+ * fail state that keeps the canvas intact for revision (US1 scenario 5).
  */
 @Component({
   selector: 'app-results-dialog',
@@ -30,6 +30,8 @@ export class ResultsDialogComponent {
   readonly nodeCount = input<number | null>(null);
   readonly edgeCount = input<number | null>(null);
   readonly costPerHr = input<number | null>(null);
+  /** The level after this one by order; null on the last level (no Next-level CTA). */
+  readonly nextLevelId = input<string | null>(null);
 
   readonly dismiss = output<void>();
   readonly next = output<string>();
@@ -59,7 +61,7 @@ export class ResultsDialogComponent {
   );
 
   onNext(): void {
-    const id = this.result().unlockedLevelId;
+    const id = this.nextLevelId();
     if (id) this.next.emit(id);
   }
 }

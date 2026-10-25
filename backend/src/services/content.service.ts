@@ -111,7 +111,7 @@ class ContentService {
       levels.push(level);
     }
 
-    // Order must be unique and contiguous from 1 (defines the unlock chain — FR-024).
+    // Order must be unique and contiguous from 1 (display order; no unlock chain since 007).
     const orders = levels.map((l) => l.order).sort((a, b) => a - b);
     for (let i = 0; i < orders.length; i++) {
       if (orders[i] !== i + 1) {

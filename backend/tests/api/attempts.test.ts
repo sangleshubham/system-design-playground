@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makeApp, level1Solution } from '../helpers.js';
+import { makeApp, level1Solution, lastLevelId } from '../helpers.js';
 
 async function saveSolution(api: ReturnType<typeof makeApp>['api']): Promise<void> {
   const { nodes, edges } = level1Solution();
@@ -18,24 +18,26 @@ describe('POST /api/v1/levels/:levelId/attempts', () => {
     expect(res.body.unlockedLevelId).toBeUndefined();
   });
 
-  it('passes the known level-1 solution and unlocks level-2', async () => {
+  it('passes the known level-1 solution and only marks it complete (no unlockedLevelId)', async () => {
     const { api } = makeApp();
     await saveSolution(api);
     const res = await api.post('/api/v1/levels/level-1/attempts');
     expect(res.status).toBe(200);
     expect(res.body.passed).toBe(true);
     expect(res.body.total).toBe(100);
-    expect(res.body.unlockedLevelId).toBe('level-2');
+    expect(res.body).not.toHaveProperty('unlockedLevelId');
 
-    // level-2 is now reachable.
-    const l2 = await api.get('/api/v1/levels/level-2');
-    expect(l2.status).toBe(200);
+    // Re-passing is idempotent: still exactly one completion.
+    await api.post('/api/v1/levels/level-1/attempts');
+    const progress = await api.get('/api/v1/progress');
+    expect(progress.body.lab.completed).toBe(1);
   });
 
-  it('returns 423 for a locked level attempt', async () => {
+  it('a fresh workspace can attempt the LAST level by order (feature 007)', async () => {
     const { api } = makeApp();
-    const res = await api.post('/api/v1/levels/level-5/attempts');
-    expect(res.status).toBe(423);
+    const res = await api.post(`/api/v1/levels/${lastLevelId()}/attempts`);
+    expect(res.status).toBe(200);
+    expect(res.body.passed).toBe(false);
   });
 
   it('best score reflects the maximum total across attempts', async () => {

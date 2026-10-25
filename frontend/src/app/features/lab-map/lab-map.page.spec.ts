@@ -55,12 +55,12 @@ const fixtureMap: MapView = {
           summary: 'Real-time messaging.',
           objectives: ['WebSocket Server'],
           missionCount: 6,
-          status: 'locked',
+          status: 'unlocked',
         },
       ],
     },
   ],
-  totals: { completed: 1, levels: 3, unlockedThroughOrder: 2 },
+  totals: { completed: 1, levels: 3 },
 };
 
 function textOf(el: HTMLElement): string {
@@ -88,11 +88,12 @@ describe('LabMapPage', () => {
     expect(text).toContain('Chat System');
   });
 
-  it('a locked card does not navigate; the map still renders it dimmed', () => {
+  it('renders no locked/dimmed cards and no "unlocked" totals copy (feature 007)', () => {
     const fixture = TestBed.createComponent(LabMapPage);
     fixture.detectChanges();
-    const lockedEl = fixture.nativeElement.querySelector('.level-card.locked');
-    expect(lockedEl).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('.level-card.locked')).toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('.level-card')).toHaveLength(3);
+    expect(textOf(fixture.nativeElement)).not.toMatch(/unlocked/i);
   });
 
   it('search narrows the grid to matching level cards', () => {

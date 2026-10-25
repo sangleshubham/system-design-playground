@@ -9,6 +9,13 @@ Conventions:
 - All ids are strings; timestamps are ISO-8601.
 - Breaking changes require a new `/api/v2` prefix (constitution).
 
+> **Feature 007 update (unlock chain removed)**: every level is always open. No endpoint
+> returns `423` any more; `GET /map` level `status` is `"unlocked" | "completed"` and
+> `totals` drops `unlockedThroughOrder`; the attempt response no longer carries
+> `unlockedLevelId` (a pass only records completion); `GET /progress` `recommendedNext` is
+> the first uncompleted level by order. The `423`/lock text below is kept as history.
+> See `specs/007-systemdesign-io-questions/plan.md` § U1.
+
 ## Content
 
 ### GET /api/v1/components

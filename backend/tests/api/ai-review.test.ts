@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { makeApp, level1Solution } from '../helpers.js';
+import { makeApp, level1Solution, lastLevelId } from '../helpers.js';
 import type { AiConfig } from '../../src/config/ai.config.js';
 import type { DeepSeekClient, DeepSeekResult } from '../../src/services/ai/deepseek.client.js';
 import type { AiReviewPayload } from '../../src/models/ai-review.js';
@@ -182,7 +182,7 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
     expect(complete.mock.calls[0][0].model).toBe('deepseek-v4-pro');
   });
 
-  it('returns 404 for an unknown level and 423 for a locked level, never calling upstream', async () => {
+  it('returns 404 for an unknown level, never calling upstream', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
     const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
 
@@ -190,11 +190,26 @@ describe('POST /api/v1/levels/:levelId/ai-review', () => {
     expect(notFound.status).toBe(404);
     expect(notFound.body.error.code).toBe('level_not_found');
 
-    const locked = await api.post('/api/v1/levels/level-5/ai-review').send({});
-    expect(locked.status).toBe(423);
-    expect(locked.body.error.code).toBe('level_locked');
-
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('a fresh workspace can AI-review the LAST level by order (no unlock chain, feature 007)', async () => {
+    const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
+    const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
+    const id = lastLevelId();
+    const { nodes, edges } = level1Solution();
+    await api
+      .put(`/api/v1/levels/${id}/design`)
+      .send({ nodes, edges, notes: [], revealedHintCount: 0 });
+
+    const res = await api.post(`/api/v1/levels/${id}/ai-review`).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.review.payload.score).toBe(78);
+    expect(complete).toHaveBeenCalledTimes(1);
+
+    const stored = await api.get(`/api/v1/levels/${id}/ai-review`);
+    expect(stored.status).toBe(200);
+    expect(stored.body.review).not.toBeNull();
   });
 });
 
@@ -329,17 +344,13 @@ describe('GET /api/v1/levels/:levelId/ai-review (US2 restore)', () => {
     expect(res.body.stale).toBe(true);
   });
 
-  it('applies the same 404/423 level guards and never calls upstream', async () => {
+  it('applies the same 404 level guard and never calls upstream', async () => {
     const complete = vi.fn(async () => result(JSON.stringify(VALID_PAYLOAD)));
     const { api } = makeApp({ aiConfig: AI_CONFIG, aiClient: fakeClient(complete) });
 
     const notFound = await api.get('/api/v1/levels/no-such-level/ai-review');
     expect(notFound.status).toBe(404);
     expect(notFound.body.error.code).toBe('level_not_found');
-
-    const locked = await api.get('/api/v1/levels/level-5/ai-review');
-    expect(locked.status).toBe(423);
-    expect(locked.body.error.code).toBe('level_locked');
 
     expect(complete).not.toHaveBeenCalled();
   });
@@ -417,6 +428,6 @@ describe('AI review unavailable — playground unaffected (US3 regression guard,
     expect(res.status).toBe(200);
     expect(res.body.passed).toBe(true);
     expect(res.body.total).toBe(100);
-    expect(res.body.unlockedLevelId).toBe('level-2');
+    expect(res.body).not.toHaveProperty('unlockedLevelId');
   });
 });

@@ -62,6 +62,13 @@ export function loadContent(): void {
   contentService.load();
 }
 
+/** Id of the LAST level by global order (no unlock chain since feature 007; any level is open). */
+export function lastLevelId(): string {
+  loadContent();
+  const levels = contentService.getLevels();
+  return levels.reduce((a, b) => (b.order > a.order ? b : a)).id;
+}
+
 /** The canonical level-1 passing design: Client → CDN → Web Server → Blob Storage. */
 export function level1Solution(): { nodes: DesignNode[]; edges: DesignEdge[] } {
   const nodes: DesignNode[] = [

@@ -63,7 +63,7 @@ flushes autosave first, same rule as RUN.
 | Status | `code` | When | UI treatment |
 |---|---|---|---|
 | 404 | `level_not_found` | unknown level | as 001 |
-| 423 | `level_locked` | locked level | as 001 |
+| 423 | `level_locked` | locked level | as 001 — **removed in feature 007** (no locked levels) |
 | 422 | `design_empty` | saved design has no nodes | "add components first" |
 | 422 | `design_too_large` | > 200 nodes | trim design |
 | 409 | `ai_review_in_flight` | same level already running | show existing progress |
@@ -98,7 +98,7 @@ lets the UI restore state after reload without spending tokens.
 - `review` is the newest row matching `(levelId, currentDesignHash)` across both
   configured models (default and deep reviews coexist; newest wins); if none,
   `review: null` and `stale: true` when older reviews exist for other hashes.
-- 404/423 as above. Never calls upstream.
+- 404/423 as above (423 removed in feature 007: only 404 remains). Never calls upstream.
 
 ## Upstream contract (backend → DeepSeek, for reference)
 

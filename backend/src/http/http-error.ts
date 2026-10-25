@@ -1,6 +1,6 @@
 /**
  * HTTP error envelope + central handler. All error responses use the shape
- * `{ error: { code, message } }` per contracts/api.md (400 / 404 / 423 / 500).
+ * `{ error: { code, message } }` per contracts/api.md (400 / 404 / 409 / 500).
  */
 import type { NextFunction, Request, Response } from 'express';
 
@@ -20,9 +20,6 @@ export const badRequest = (message: string, extra?: Record<string, unknown>) =>
   new ApiHttpError(400, 'validation_error', message, extra);
 
 export const notFound = (message: string) => new ApiHttpError(404, 'not_found', message);
-
-export const locked = (message: string, extra?: Record<string, unknown>) =>
-  new ApiHttpError(423, 'locked', message, extra);
 
 /** Standard message for an optimistic-concurrency conflict (research R6, FR-011). */
 export const STALE_WRITE_MESSAGE = 'This design changed since you loaded it.';
