@@ -223,6 +223,16 @@
     "icon": "aws-opensearch"
   },
   {
+    "id": "geo-index",
+    "name": "Geospatial Index",
+    "tech": "QuadTree / Geohash (PostGIS, Redis GEO)",
+    "category": "storage",
+    "description": "Spatial index that answers \"what is near this point?\" by bucketing locations into geohash cells or quadtree nodes.",
+    "costPerHr": 0.5,
+    "latencyMs": 8,
+    "icon": "tile-geo-index"
+  },
+  {
     "id": "timeseries-db",
     "name": "Time-Series DB",
     "tech": "InfluxDB",
@@ -354,6 +364,16 @@
     "costPerHr": 0.45,
     "latencyMs": 15,
     "icon": "tile-zookeeper-etcd"
+  },
+  {
+    "id": "key-generation-service",
+    "name": "Key Generation Service",
+    "tech": "Pre-generated base62 keys (KGS)",
+    "category": "services",
+    "description": "Pre-generates unique short keys offline and hands them to app servers in batches, so writes never collide or race on ID creation.",
+    "costPerHr": 0.2,
+    "latencyMs": 2,
+    "icon": "tile-key-generation-service"
   },
   {
     "id": "monitoring",

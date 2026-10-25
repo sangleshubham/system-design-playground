@@ -28,6 +28,8 @@ const level: Level = {
   resilienceRules: [],
   recommendedComponentIds: ['client', 'cdn'],
   hints: ['h1', 'h2'],
+  tips: [],
+  resources: [],
 };
 
 function newStore(): PlaygroundStore {

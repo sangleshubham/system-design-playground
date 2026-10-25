@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0},
+    {"id": "lb", "componentId": "load-balancer", "displayName": "Load Balancer", "note": "", "x": 220, "y": 0},
+    {"id": "web1", "componentId": "web-server", "displayName": "Web Server 1", "note": "", "x": 440, "y": -70},
+    {"id": "web2", "componentId": "web-server", "displayName": "Web Server 2", "note": "", "x": 440, "y": 70},
+    {"id": "cache", "componentId": "cache", "displayName": "Cache", "note": "", "x": 660, "y": -140},
+    {"id": "mq", "componentId": "message-queue", "displayName": "Message Queue", "note": "", "x": 660, "y": 0},
+    {"id": "mon", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 660, "y": 140},
+    {"id": "stream", "componentId": "stream-processor", "displayName": "Stream Processor", "note": "", "x": 880, "y": 0},
+    {"id": "search", "componentId": "search-index", "displayName": "Search Index", "note": "", "x": 1100, "y": -70},
+    {"id": "nosql", "componentId": "nosql-database", "displayName": "NoSQL Database", "note": "", "x": 1100, "y": 70}
+  ],
+  "edges": [
+    {"id": "client-lb", "sourceNodeId": "client", "targetNodeId": "lb"},
+    {"id": "lb-web1", "sourceNodeId": "lb", "targetNodeId": "web1"},
+    {"id": "lb-web2", "sourceNodeId": "lb", "targetNodeId": "web2"},
+    {"id": "web1-search", "sourceNodeId": "web1", "targetNodeId": "search"},
+    {"id": "web2-search", "sourceNodeId": "web2", "targetNodeId": "search"},
+    {"id": "web1-cache", "sourceNodeId": "web1", "targetNodeId": "cache"},
+    {"id": "web2-cache", "sourceNodeId": "web2", "targetNodeId": "cache"},
+    {"id": "web1-mq", "sourceNodeId": "web1", "targetNodeId": "mq"},
+    {"id": "web2-mq", "sourceNodeId": "web2", "targetNodeId": "mq"},
+    {"id": "web1-mon", "sourceNodeId": "web1", "targetNodeId": "mon"},
+    {"id": "web2-mon", "sourceNodeId": "web2", "targetNodeId": "mon"},
+    {"id": "mq-stream", "sourceNodeId": "mq", "targetNodeId": "stream"},
+    {"id": "stream-search", "sourceNodeId": "stream", "targetNodeId": "search"},
+    {"id": "stream-nosql", "sourceNodeId": "stream", "targetNodeId": "nosql"}
+  ]
+}

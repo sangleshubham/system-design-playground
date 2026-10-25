@@ -1,0 +1,25 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0},
+    {"id": "gw", "componentId": "api-gateway", "displayName": "API Gateway", "note": "", "x": 220, "y": 0},
+    {"id": "web", "componentId": "web-server", "displayName": "Web Server", "note": "", "x": 440, "y": 0},
+    {"id": "mq", "componentId": "message-queue", "displayName": "Message Queue", "note": "", "x": 660, "y": 0},
+    {"id": "w1", "componentId": "worker", "displayName": "Worker 1", "note": "", "x": 880, "y": -140},
+    {"id": "w2", "componentId": "worker", "displayName": "Worker 2", "note": "", "x": 880, "y": 0},
+    {"id": "dlq", "componentId": "dead-letter-queue", "displayName": "Dead Letter Queue", "note": "", "x": 880, "y": 140},
+    {"id": "notify", "componentId": "notification-service", "displayName": "Notification Service", "note": "", "x": 1100, "y": -70},
+    {"id": "mon", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 1100, "y": 70}
+  ],
+  "edges": [
+    {"id": "client-gw", "sourceNodeId": "client", "targetNodeId": "gw"},
+    {"id": "gw-web", "sourceNodeId": "gw", "targetNodeId": "web"},
+    {"id": "web-mq", "sourceNodeId": "web", "targetNodeId": "mq"},
+    {"id": "mq-w1", "sourceNodeId": "mq", "targetNodeId": "w1"},
+    {"id": "mq-w2", "sourceNodeId": "mq", "targetNodeId": "w2"},
+    {"id": "mq-dlq", "sourceNodeId": "mq", "targetNodeId": "dlq"},
+    {"id": "w1-notify", "sourceNodeId": "w1", "targetNodeId": "notify"},
+    {"id": "w2-notify", "sourceNodeId": "w2", "targetNodeId": "notify"},
+    {"id": "w1-mon", "sourceNodeId": "w1", "targetNodeId": "mon"},
+    {"id": "w2-mon", "sourceNodeId": "w2", "targetNodeId": "mon"}
+  ]
+}

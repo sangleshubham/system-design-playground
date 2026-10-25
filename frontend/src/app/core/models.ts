@@ -3,7 +3,7 @@
  * the mission-check semantics live in exactly two places (backend mission.service +
  * the playground store) by design — see data-model.md § Mission.
  *
- * MIRROR-DRIFT NOTE: the backend validates Component.icon against the 42-id
+ * MIRROR-DRIFT NOTE: the backend validates Component.icon against the 44-id
  * COMPONENT_ICON_IDS enum in backend/src/models/index.ts; here Component.icon stays
  * `string` — the frontend's safety net is the componentIconName fallback resolver, not
  * the type.
@@ -79,6 +79,15 @@ export interface LevelSpecs {
   bonus?: string;
 }
 
+export type ResourceKind = 'article' | 'video' | 'paper' | 'discussion' | 'course';
+
+/** A further-reading link on a level (feature 007). `url` is validated http(s) server-side. */
+export interface Resource {
+  title: string;
+  url: string;
+  kind: ResourceKind;
+}
+
 export interface Level {
   id: string;
   actId: string;
@@ -94,6 +103,11 @@ export interface Level {
   resilienceRules: ResilienceRule[];
   recommendedComponentIds: string[];
   hints: string[];
+  /** Always an array from the API (defaulted to [] server-side). */
+  tips: string[];
+  /** Always an array from the API (defaulted to [] server-side). */
+  resources: Resource[];
+  sourceUrl?: string;
 }
 
 export interface DesignNode {

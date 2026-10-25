@@ -1,0 +1,15 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0},
+    {"id": "cdn", "componentId": "cdn", "displayName": "CDN", "note": "", "x": 220, "y": 0},
+    {"id": "web", "componentId": "web-server", "displayName": "Web Server", "note": "", "x": 440, "y": 0},
+    {"id": "blob", "componentId": "blob-storage", "displayName": "Blob Storage", "note": "", "x": 660, "y": -70},
+    {"id": "mon", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 660, "y": 70}
+  ],
+  "edges": [
+    {"id": "client-cdn", "sourceNodeId": "client", "targetNodeId": "cdn"},
+    {"id": "cdn-web", "sourceNodeId": "cdn", "targetNodeId": "web"},
+    {"id": "web-blob", "sourceNodeId": "web", "targetNodeId": "blob"},
+    {"id": "web-mon", "sourceNodeId": "web", "targetNodeId": "mon"}
+  ]
+}

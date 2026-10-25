@@ -33,10 +33,10 @@ describe('icon id content validation', () => {
     expect(result.success).toBe(true);
   });
 
-  it('has 42 pairwise-distinct icon values across the shipped catalog', () => {
+  it('has 44 pairwise-distinct icon values across the shipped catalog', () => {
     const raw = loadShippedComponents();
     const components = z.array(ComponentSchema).parse(raw);
-    expect(components).toHaveLength(42);
+    expect(components).toHaveLength(44);
     const icons = components.map((c) => c.icon);
     expect(new Set(icons).size).toBe(icons.length);
   });

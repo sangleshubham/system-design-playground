@@ -4,12 +4,12 @@ import { ComponentSchema } from '../../src/models/index.js';
 import { contentService } from '../../src/services/content.service.js';
 
 describe('GET /api/v1/components', () => {
-  it('returns 200 with the full 42-component catalog, each valid', async () => {
+  it('returns 200 with the full 44-component catalog, each valid', async () => {
     const { api } = makeApp();
     const res = await api.get('/api/v1/components');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body).toHaveLength(42);
+    expect(res.body).toHaveLength(44);
     for (const c of res.body) {
       expect(ComponentSchema.safeParse(c).success).toBe(true);
     }
@@ -28,7 +28,7 @@ describe('GET /api/v1/components', () => {
 describe('content validation', () => {
   it('loads and validates every seed file without throwing', () => {
     expect(() => contentService.load()).not.toThrow();
-    expect(contentService.getComponents().length).toBe(42);
+    expect(contentService.getComponents().length).toBe(44);
     expect(contentService.getLevels().length).toBe(12);
     expect(contentService.getActs().length).toBe(2);
   });

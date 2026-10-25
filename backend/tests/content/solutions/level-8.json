@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0},
+    {"id": "lb", "componentId": "load-balancer", "displayName": "Load Balancer", "note": "", "x": 220, "y": 0},
+    {"id": "ws1", "componentId": "websocket-server", "displayName": "WebSocket Server 1", "note": "", "x": 440, "y": -70},
+    {"id": "ws2", "componentId": "websocket-server", "displayName": "WebSocket Server 2", "note": "", "x": 440, "y": 70},
+    {"id": "pubsub", "componentId": "pub-sub", "displayName": "Pub/Sub", "note": "", "x": 660, "y": -210},
+    {"id": "cache", "componentId": "cache", "displayName": "Cache", "note": "", "x": 660, "y": -70},
+    {"id": "mq", "componentId": "message-queue", "displayName": "Message Queue", "note": "", "x": 660, "y": 70},
+    {"id": "mon", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 660, "y": 210},
+    {"id": "nosql", "componentId": "nosql-database", "displayName": "NoSQL Database", "note": "", "x": 880, "y": 0}
+  ],
+  "edges": [
+    {"id": "client-lb", "sourceNodeId": "client", "targetNodeId": "lb"},
+    {"id": "lb-ws1", "sourceNodeId": "lb", "targetNodeId": "ws1"},
+    {"id": "lb-ws2", "sourceNodeId": "lb", "targetNodeId": "ws2"},
+    {"id": "ws1-pubsub", "sourceNodeId": "ws1", "targetNodeId": "pubsub"},
+    {"id": "ws2-pubsub", "sourceNodeId": "ws2", "targetNodeId": "pubsub"},
+    {"id": "ws1-cache", "sourceNodeId": "ws1", "targetNodeId": "cache"},
+    {"id": "ws2-cache", "sourceNodeId": "ws2", "targetNodeId": "cache"},
+    {"id": "ws1-mq", "sourceNodeId": "ws1", "targetNodeId": "mq"},
+    {"id": "ws2-mq", "sourceNodeId": "ws2", "targetNodeId": "mq"},
+    {"id": "ws1-mon", "sourceNodeId": "ws1", "targetNodeId": "mon"},
+    {"id": "ws2-mon", "sourceNodeId": "ws2", "targetNodeId": "mon"},
+    {"id": "mq-nosql", "sourceNodeId": "mq", "targetNodeId": "nosql"}
+  ]
+}

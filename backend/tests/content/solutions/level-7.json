@@ -1,0 +1,25 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0},
+    {"id": "lb", "componentId": "load-balancer", "displayName": "Load Balancer", "note": "", "x": 220, "y": 0},
+    {"id": "web1", "componentId": "web-server", "displayName": "ID Server 1", "note": "", "x": 440, "y": -70},
+    {"id": "web2", "componentId": "web-server", "displayName": "ID Server 2", "note": "", "x": 440, "y": 70},
+    {"id": "zk", "componentId": "zookeeper-etcd", "displayName": "ZooKeeper / etcd", "note": "", "x": 660, "y": -210},
+    {"id": "cache", "componentId": "cache", "displayName": "Cache", "note": "", "x": 660, "y": -70},
+    {"id": "nosql", "componentId": "nosql-database", "displayName": "NoSQL Database", "note": "", "x": 660, "y": 70},
+    {"id": "mon", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 660, "y": 210}
+  ],
+  "edges": [
+    {"id": "client-lb", "sourceNodeId": "client", "targetNodeId": "lb"},
+    {"id": "lb-web1", "sourceNodeId": "lb", "targetNodeId": "web1"},
+    {"id": "lb-web2", "sourceNodeId": "lb", "targetNodeId": "web2"},
+    {"id": "web1-zk", "sourceNodeId": "web1", "targetNodeId": "zk"},
+    {"id": "web2-zk", "sourceNodeId": "web2", "targetNodeId": "zk"},
+    {"id": "web1-cache", "sourceNodeId": "web1", "targetNodeId": "cache"},
+    {"id": "web2-cache", "sourceNodeId": "web2", "targetNodeId": "cache"},
+    {"id": "web1-nosql", "sourceNodeId": "web1", "targetNodeId": "nosql"},
+    {"id": "web2-nosql", "sourceNodeId": "web2", "targetNodeId": "nosql"},
+    {"id": "web1-mon", "sourceNodeId": "web1", "targetNodeId": "mon"},
+    {"id": "web2-mon", "sourceNodeId": "web2", "targetNodeId": "mon"}
+  ]
+}

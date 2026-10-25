@@ -83,8 +83,8 @@ describe('component-icon.registry', () => {
       (k) => k.startsWith('aws-') || k.startsWith('tile-'),
     );
 
-    it('has exactly 42 component ids (23 aws-* + 19 tile-*)', () => {
-      expect(componentIds).toHaveLength(42);
+    it('has exactly 44 component ids (23 aws-* + 21 tile-*)', () => {
+      expect(componentIds).toHaveLength(44);
     });
 
     it('completeness (FR-001): every component id resolves to a non-empty <svg> string', () => {
@@ -96,9 +96,9 @@ describe('component-icon.registry', () => {
       }
     });
 
-    it('uniqueness (FR-005): the 42 component SVG strings are pairwise distinct', () => {
+    it('uniqueness (FR-005): the 44 component SVG strings are pairwise distinct', () => {
       const values = componentIds.map((id) => COMPONENT_ICONS[id]);
-      expect(new Set(values).size).toBe(42);
+      expect(new Set(values).size).toBe(44);
     });
   });
 

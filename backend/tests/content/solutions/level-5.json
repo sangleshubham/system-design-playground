@@ -1,0 +1,21 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0},
+    {"id": "lb", "componentId": "load-balancer", "displayName": "Load Balancer", "note": "", "x": 220, "y": 0},
+    {"id": "web", "componentId": "web-server", "displayName": "Web Server", "note": "", "x": 440, "y": 0},
+    {"id": "cache", "componentId": "cache", "displayName": "Cache", "note": "", "x": 660, "y": -280},
+    {"id": "zk", "componentId": "zookeeper-etcd", "displayName": "ZooKeeper / etcd", "note": "", "x": 660, "y": -140},
+    {"id": "kv1", "componentId": "nosql-database", "displayName": "KV Replica 1", "note": "", "x": 660, "y": 0},
+    {"id": "kv2", "componentId": "nosql-database", "displayName": "KV Replica 2", "note": "", "x": 660, "y": 140},
+    {"id": "mon", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 660, "y": 280}
+  ],
+  "edges": [
+    {"id": "client-lb", "sourceNodeId": "client", "targetNodeId": "lb"},
+    {"id": "lb-web", "sourceNodeId": "lb", "targetNodeId": "web"},
+    {"id": "web-cache", "sourceNodeId": "web", "targetNodeId": "cache"},
+    {"id": "web-zk", "sourceNodeId": "web", "targetNodeId": "zk"},
+    {"id": "web-kv1", "sourceNodeId": "web", "targetNodeId": "kv1"},
+    {"id": "web-kv2", "sourceNodeId": "web", "targetNodeId": "kv2"},
+    {"id": "web-mon", "sourceNodeId": "web", "targetNodeId": "mon"}
+  ]
+}

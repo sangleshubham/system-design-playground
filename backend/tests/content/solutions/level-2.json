@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0},
+    {"id": "lb", "componentId": "load-balancer", "displayName": "Load Balancer", "note": "", "x": 220, "y": 0},
+    {"id": "web1", "componentId": "web-server", "displayName": "Web Server 1", "note": "", "x": 440, "y": -70},
+    {"id": "web2", "componentId": "web-server", "displayName": "Web Server 2", "note": "", "x": 440, "y": 70},
+    {"id": "cache", "componentId": "cache", "displayName": "Cache", "note": "", "x": 660, "y": -70},
+    {"id": "sql", "componentId": "sql-database", "displayName": "SQL Database", "note": "", "x": 660, "y": 70}
+  ],
+  "edges": [
+    {"id": "client-lb", "sourceNodeId": "client", "targetNodeId": "lb"},
+    {"id": "lb-web1", "sourceNodeId": "lb", "targetNodeId": "web1"},
+    {"id": "lb-web2", "sourceNodeId": "lb", "targetNodeId": "web2"},
+    {"id": "web1-sql", "sourceNodeId": "web1", "targetNodeId": "sql"},
+    {"id": "web2-sql", "sourceNodeId": "web2", "targetNodeId": "sql"},
+    {"id": "web1-cache", "sourceNodeId": "web1", "targetNodeId": "cache"},
+    {"id": "web2-cache", "sourceNodeId": "web2", "targetNodeId": "cache"}
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {"id": "client", "componentId": "client", "displayName": "Seed Client", "note": "", "x": 0, "y": 0},
+    {"id": "web", "componentId": "web-server", "displayName": "Seed API", "note": "", "x": 220, "y": 0},
+    {"id": "mq", "componentId": "message-queue", "displayName": "URL Frontier", "note": "", "x": 440, "y": 0},
+    {"id": "w1", "componentId": "worker", "displayName": "Crawler 1", "note": "", "x": 660, "y": -70},
+    {"id": "w2", "componentId": "worker", "displayName": "Crawler 2", "note": "", "x": 660, "y": 70},
+    {"id": "bloom", "componentId": "bloom-filter", "displayName": "Bloom Filter", "note": "", "x": 880, "y": -210},
+    {"id": "blob", "componentId": "blob-storage", "displayName": "Blob Storage", "note": "", "x": 880, "y": -70},
+    {"id": "search", "componentId": "search-index", "displayName": "Search Index", "note": "", "x": 880, "y": 70},
+    {"id": "mon", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 880, "y": 210}
+  ],
+  "edges": [
+    {"id": "client-web", "sourceNodeId": "client", "targetNodeId": "web"},
+    {"id": "web-mq", "sourceNodeId": "web", "targetNodeId": "mq"},
+    {"id": "mq-w1", "sourceNodeId": "mq", "targetNodeId": "w1"},
+    {"id": "mq-w2", "sourceNodeId": "mq", "targetNodeId": "w2"},
+    {"id": "w1-bloom", "sourceNodeId": "w1", "targetNodeId": "bloom"},
+    {"id": "w2-bloom", "sourceNodeId": "w2", "targetNodeId": "bloom"},
+    {"id": "w1-blob", "sourceNodeId": "w1", "targetNodeId": "blob"},
+    {"id": "w2-blob", "sourceNodeId": "w2", "targetNodeId": "blob"},
+    {"id": "w1-search", "sourceNodeId": "w1", "targetNodeId": "search"},
+    {"id": "w2-search", "sourceNodeId": "w2", "targetNodeId": "search"},
+    {"id": "w1-mq", "sourceNodeId": "w1", "targetNodeId": "mq"},
+    {"id": "w2-mq", "sourceNodeId": "w2", "targetNodeId": "mq"},
+    {"id": "w1-mon", "sourceNodeId": "w1", "targetNodeId": "mon"},
+    {"id": "w2-mon", "sourceNodeId": "w2", "targetNodeId": "mon"}
+  ]
+}

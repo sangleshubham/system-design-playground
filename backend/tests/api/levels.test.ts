@@ -11,6 +11,17 @@ describe('GET /api/v1/levels/:levelId', () => {
     expect(res.body.design).toBeNull();
   });
 
+  it('always returns tips and resources as arrays (defaulted when omitted)', async () => {
+    const { api } = makeApp();
+    for (const id of ['level-1', lastLevelId()]) {
+      const res = await api.get(`/api/v1/levels/${id}`);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.tips)).toBe(true);
+      expect(Array.isArray(res.body.resources)).toBe(true);
+      if (res.body.sourceUrl !== undefined) expect(res.body.sourceUrl).toMatch(/^https?:\/\//);
+    }
+  });
+
   it('a fresh workspace can open the LAST level by order (no unlock chain, feature 007)', async () => {
     const { api } = makeApp();
     const id = lastLevelId();

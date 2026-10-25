@@ -28,8 +28,8 @@ function formatZodError(file: string, error: z.ZodError): string {
   return `Invalid content in ${file}:\n${lines.join('\n')}`;
 }
 
-function readJson(file: string): unknown {
-  const full = join(CONTENT_DIR, file);
+function readJson(contentDir: string, file: string): unknown {
+  const full = join(contentDir, file);
   let raw: string;
   try {
     raw = readFileSync(full, 'utf8');
@@ -51,7 +51,10 @@ function parseOrThrow<T>(schema: z.ZodType<T>, file: string, data: unknown): T {
   return result.data;
 }
 
-class ContentService {
+export class ContentService {
+  /** `contentDir` defaults to the shipped seeds (or $CONTENT_DIR); tests pass a fixture dir. */
+  constructor(private readonly contentDir: string = CONTENT_DIR) {}
+
   private components: Component[] = [];
   private componentsById = new Map<string, Component>();
   private acts: Act[] = [];
@@ -69,7 +72,7 @@ class ContentService {
     const components = parseOrThrow(
       z.array(ComponentSchema),
       'components.json',
-      readJson('components.json'),
+      readJson(this.contentDir, 'components.json'),
     );
     const seenComponentIds = new Set<string>();
     for (const c of components) {
@@ -80,7 +83,11 @@ class ContentService {
     }
 
     // Acts
-    const acts = parseOrThrow(z.array(ActSchema), 'acts.json', readJson('acts.json'));
+    const acts = parseOrThrow(
+      z.array(ActSchema),
+      'acts.json',
+      readJson(this.contentDir, 'acts.json'),
+    );
     const seenActIds = new Set<string>();
     for (const a of acts) {
       if (seenActIds.has(a.id)) {
@@ -90,7 +97,7 @@ class ContentService {
     }
 
     // Levels: one file per level under levels/
-    const levelsDir = join(CONTENT_DIR, 'levels');
+    const levelsDir = join(this.contentDir, 'levels');
     let levelFiles: string[];
     try {
       levelFiles = readdirSync(levelsDir)
@@ -106,7 +113,7 @@ class ContentService {
     const levels: Level[] = [];
     for (const file of levelFiles) {
       const rel = join('levels', file);
-      const level = parseOrThrow(LevelSchema, rel, readJson(rel));
+      const level = parseOrThrow(LevelSchema, rel, readJson(this.contentDir, rel));
       this.validateLevelReferences(rel, level, seenComponentIds, seenActIds);
       levels.push(level);
     }
@@ -183,6 +190,15 @@ class ContentService {
       if (r.kind === 'requires-companion') {
         requireComponent(r.companionComponentId, `resilience rule (companion)`);
       }
+    }
+
+    // Resource URLs are rendered as a link list; a duplicate is always an authoring slip.
+    const seenUrls = new Set<string>();
+    for (const r of level.resources) {
+      if (seenUrls.has(r.url)) {
+        throw new ContentError(`${file}: duplicate resource url "${r.url}"`);
+      }
+      seenUrls.add(r.url);
     }
   }
 
