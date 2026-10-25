@@ -16,5 +16,11 @@
     "order": 3,
     "title": "Social, Media & Places",
     "description": "Photo feeds, timelines, file sync, calendars and location search — the classic product-design interview questions."
+  },
+  {
+    "id": "act-4",
+    "order": 4,
+    "title": "Data Infrastructure",
+    "description": "Build the plumbing everyone else depends on: queues, logs, metrics, analytics and real-time ranking pipelines."
   }
 ]

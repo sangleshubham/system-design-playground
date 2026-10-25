@@ -1,0 +1,124 @@
+{
+  "id": "level-23",
+  "actId": "act-4",
+  "order": 23,
+  "title": "Top-K Shared Articles",
+  "difficulty": "hard",
+  "summary": "Rank the most-shared articles over sliding windows using asynchronous aggregation and precomputed top-K lists.",
+  "narrative": "Return the K most-shared articles, with K ≤ 100, over the last 5 min, 1 h and 24 h. Expect ~10 K shares/s on average and ~100 K/s at peak, while reads of precomputed rankings finish in < 50 ms. The Client submits share events and requests rankings through a Load Balancer and Web Servers. Keep the share write path fast: validate and append an event to the Message Queue, then acknowledge acceptance without waiting for ranking recomputation.\n\nPartition Stream Processor aggregation by article ID so all counts for an article reach the same owner. Keep per-minute count buckets and sum the buckets for each window, expiring old buckets as time advances. Maintain candidate counts and a size-K min-heap per partition, merge partial top-K lists, and publish a precomputed list to Cache for each window. Minute buckets provide minute-granularity sliding windows; exact second-level boundaries need finer buckets or retained boundary events. Persist per-minute counts in NoSQL for recovery and exact recomputation at the chosen resolution.\n\nServe ranking reads directly from Cache through the Web Server rather than scanning counts on each request. Run multiple Web Servers and Stream Processors, checkpoint progress and deduplicate replayed share events so retries do not inflate counts. Bucket expiration can lower a leader's count, so exact ranking must reconsider stored candidates rather than keeping only the old K winners. A count-min sketch can cut memory for approximate rankings, but it only estimates counts (it can overcount and cannot list heavy hitters by itself), so a size-K heap still tracks the candidate articles. Optionally archive raw events in Blob Storage for batch recomputation and add Monitoring for lag and freshness.",
+  "objectives": ["Sliding-window counts", "Partitioned top-K merge", "Fast append-only shares", "Precomputed ranking reads"],
+  "specs": {
+    "functional": [
+      "Accept share events and append them to the Message Queue without synchronous ranking",
+      "Aggregate counts by article ID for 5-minute, 1-hour and 24-hour windows",
+      "Merge partial top-K lists and publish lists for K ≤ 100 to Cache",
+      "Serve ranking reads from Cache through the Web Server API",
+      "Persist per-minute counts in NoSQL for recovery and recomputation"
+    ],
+    "nonFunctional": [
+      "Sustain ~10 K shares/s average and ~100 K/s peak",
+      "Serve precomputed ranking reads in < 50 ms",
+      "Continue API and aggregation work after a web-server or processor failure",
+      "Bound ranking staleness through regular publication and lag tracking"
+    ],
+    "constraints": [
+      "Clients must access Cache through the Web Server API",
+      "Share events reach Stream Processors through the Message Queue",
+      "Use a NoSQL store for durable per-article minute counts",
+      "Account for bucket expiration, replay deduplication and the selected window resolution"
+    ],
+    "budgetPerHr": 5.0,
+    "latencyTargetMs": 120,
+    "capacity": [
+      "K ≤ 100; windows: last 5 min, 1 h and 24 h",
+      "~10 K shares/s average; ~100 K/s peak",
+      "Up to 1,440 per-minute buckets per active article for a 24-hour window"
+    ],
+    "tradeoff": "Exact bucket counts and candidate tracking cost memory but allow reliable recomputation as windows expire. A count-min sketch with a heap saves memory at the cost of approximation. Precomputed cached rankings keep reads fast while publication intervals introduce bounded staleness.",
+    "bonus": "Connect Message Queue → Blob Storage for raw share events used in batch recomputation and add Monitoring for lag and ranking freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route share and ranking requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance share and query API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append share events to the Message Queue" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Aggregate shares by article and time window" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Publish precomputed top-K lists to Cache" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read cached rankings through the API" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "nosql-database", "label": "Persist per-minute article counts in NoSQL" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "blob-storage", "label": "Archive raw share events for recomputation", "bonus": true },
+    { "id": "m9", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for ranking freshness", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "cache",
+      "message": "Clients read rankings through the Web Server instead of accessing Cache directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Share events must pass through the Message Queue before ranking aggregation."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers for share and ranking API availability."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors to distribute article partitions and recover processing."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "stream-processor",
+      "companionComponentId": "nosql-database",
+      "message": "Connect Stream Processors to NoSQL for durable per-minute counts and recovery."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "stream-processor", "cache", "nosql-database", "blob-storage", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server → Message Queue. A share request appends an event; it does not wait for top-K computation.",
+    "Connect Message Queue → Stream Processor, then Stream Processor → Cache for top-K lists and → NoSQL for durable minute counts. Connect Web Server → Cache for fast reads; partition and merge inside the processing tier.",
+    "Use two Web Servers and two Stream Processors. Connect each Web Server to the queue and Cache, the queue to both processors, and both processors to Cache and NoSQL. Add Message Queue → Blob Storage for raw events and each Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/identify-k-most-shared-articles-in-time-windows",
+  "tips": [
+    "At its core - what algorithm would you use? Count Min Sketch? or some other?",
+    "How will you ensure that each new update (share) is fast?",
+    "How do you use caching to improve read performance?",
+    "How will you scale this as updates get very frequent?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/258398/design-top-shared-post-system-in-5mins1-hour1-day1-week",
+      "kind": "discussion"
+    },
+    {
+      "title": "Official Google Mock Interview",
+      "url": "https://www.youtube.com/watch?v=S1DvEdR0iUo",
+      "kind": "video"
+    },
+    {
+      "title": "Great high level overview",
+      "url": "https://mecha-mind.medium.com/system-design-top-k-trending-hashtags-4e12de5bb846",
+      "kind": "article"
+    },
+    {
+      "title": "Solution from Meta Engineer",
+      "url": "https://www.youtube.com/watch?v=1lfktgZ9Eeo",
+      "kind": "video"
+    },
+    {
+      "title": "Text solution",
+      "url": "https://www.hellointerview.com/learn/system-design/problem-breakdowns/top-k",
+      "kind": "article"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "nodes": [
+    { "id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0 },
+    { "id": "load-balancer", "componentId": "load-balancer", "displayName": "Load Balancer", "note": "", "x": 220, "y": 0 },
+    { "id": "web-server1", "componentId": "web-server", "displayName": "Web Server 1", "note": "", "x": 440, "y": 0 },
+    { "id": "web-server2", "componentId": "web-server", "displayName": "Web Server 2", "note": "", "x": 440, "y": 140 },
+    { "id": "message-queue", "componentId": "message-queue", "displayName": "Message Queue", "note": "", "x": 660, "y": 0 },
+    { "id": "stream-processor1", "componentId": "stream-processor", "displayName": "Stream Processor 1", "note": "", "x": 880, "y": 0 },
+    { "id": "stream-processor2", "componentId": "stream-processor", "displayName": "Stream Processor 2", "note": "", "x": 880, "y": 140 },
+    { "id": "timeseries-db1", "componentId": "timeseries-db", "displayName": "Time-Series DB 1", "note": "", "x": 1100, "y": 0 },
+    { "id": "timeseries-db2", "componentId": "timeseries-db", "displayName": "Time-Series DB 2", "note": "", "x": 1100, "y": 140 },
+    { "id": "notification-service", "componentId": "notification-service", "displayName": "Notification Service", "note": "", "x": 1320, "y": 0 },
+    { "id": "cache", "componentId": "cache", "displayName": "Cache", "note": "", "x": 1540, "y": 0 },
+    { "id": "blob-storage", "componentId": "blob-storage", "displayName": "Blob Storage", "note": "", "x": 1760, "y": 0 }
+  ],
+  "edges": [
+    { "id": "client-load-balancer", "sourceNodeId": "client", "targetNodeId": "load-balancer" },
+    { "id": "load-balancer-web-server1", "sourceNodeId": "load-balancer", "targetNodeId": "web-server1" },
+    { "id": "load-balancer-web-server2", "sourceNodeId": "load-balancer", "targetNodeId": "web-server2" },
+    { "id": "web-server1-message-queue", "sourceNodeId": "web-server1", "targetNodeId": "message-queue" },
+    { "id": "web-server2-message-queue", "sourceNodeId": "web-server2", "targetNodeId": "message-queue" },
+    { "id": "web-server1-timeseries-db1", "sourceNodeId": "web-server1", "targetNodeId": "timeseries-db1" },
+    { "id": "web-server1-timeseries-db2", "sourceNodeId": "web-server1", "targetNodeId": "timeseries-db2" },
+    { "id": "web-server2-timeseries-db1", "sourceNodeId": "web-server2", "targetNodeId": "timeseries-db1" },
+    { "id": "web-server2-timeseries-db2", "sourceNodeId": "web-server2", "targetNodeId": "timeseries-db2" },
+    { "id": "web-server1-cache", "sourceNodeId": "web-server1", "targetNodeId": "cache" },
+    { "id": "web-server2-cache", "sourceNodeId": "web-server2", "targetNodeId": "cache" },
+    { "id": "message-queue-stream-processor1", "sourceNodeId": "message-queue", "targetNodeId": "stream-processor1" },
+    { "id": "message-queue-stream-processor2", "sourceNodeId": "message-queue", "targetNodeId": "stream-processor2" },
+    { "id": "stream-processor1-timeseries-db1", "sourceNodeId": "stream-processor1", "targetNodeId": "timeseries-db1" },
+    { "id": "stream-processor1-timeseries-db2", "sourceNodeId": "stream-processor1", "targetNodeId": "timeseries-db2" },
+    { "id": "stream-processor2-timeseries-db1", "sourceNodeId": "stream-processor2", "targetNodeId": "timeseries-db1" },
+    { "id": "stream-processor2-timeseries-db2", "sourceNodeId": "stream-processor2", "targetNodeId": "timeseries-db2" },
+    { "id": "stream-processor1-notification-service", "sourceNodeId": "stream-processor1", "targetNodeId": "notification-service" },
+    { "id": "stream-processor2-notification-service", "sourceNodeId": "stream-processor2", "targetNodeId": "notification-service" },
+    { "id": "timeseries-db1-blob-storage", "sourceNodeId": "timeseries-db1", "targetNodeId": "blob-storage" },
+    { "id": "timeseries-db2-blob-storage", "sourceNodeId": "timeseries-db2", "targetNodeId": "blob-storage" }
+  ]
+}

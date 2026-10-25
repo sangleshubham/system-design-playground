@@ -630,7 +630,7 @@ Resources:
 - Leetcode Discussion — https://leetcode.com/discuss/interview-question/system-design/622704/Design-a-system-to-store-and-retrieve-logs-for-all-of-eBay — discussion
 
 Problem: agents on every EC2 host tail and batch log lines (the Client is the host agent —
-and also the engineer's browser); ~1 M lines/s, ~1 TB/day; full-text search over the last
+and also the engineer's browser); ~1 M lines/s (~120 B/line → ~10 TB/day raw, ~1 TB/day compressed); full-text search over the last
 7 days in seconds (hot tier, time-partitioned indices), 1 year archived in object storage
 (cold tier); live tail streams new matching lines to the browser. Do not use the
 Log Aggregator component — this level *is* the log aggregator.

@@ -1,0 +1,129 @@
+{
+  "id": "level-19",
+  "actId": "act-4",
+  "order": 19,
+  "title": "Distributed Message Queue",
+  "difficulty": "hard",
+  "summary": "Build a durable distributed queue with competing consumers, redelivery and isolated poison messages.",
+  "narrative": "The Client here is the producer service, and Workers are the consumers. Build an SQS/RabbitMQ-like service with send, receive and ack/delete operations. A received message is hidden by a visibility timeout, then becomes eligible for redelivery if the consumer fails to acknowledge it. Competing consumers share the work: one consumer handles a delivery at a time, but at-least-once delivery means retries can produce duplicates, so consumers must make side effects idempotent.\n\nRoute producers through a Load Balancer to Message Queue broker nodes. Shard queues across the broker fleet and replicate each queue as a quorum queue, acknowledging a send only after durable replication. Broker redundancy and per-queue replication are distinct: a production quorum normally uses an odd replica set such as three members to retain a majority after one failure. Use ZooKeeper/etcd as the membership, queue-leadership and metadata control plane; producers learn queue behavior through brokers rather than contacting that coordinator.\n\nRun multiple consumers and move a message to a Dead Letter Queue after N unsuccessful attempts, preserving failure details for inspection and controlled redrive. Track queue depth, oldest-message age and redelivery rates with optional Monitoring. A queue distributes a message among competing consumers; pub/sub gives each subscription a copy. An optional Pub/Sub fan-out exchange can route copies into separate subscriber queues hosted on the brokers, with competing Workers inside each queue. Producers never invoke Workers directly.",
+  "objectives": ["At-least-once delivery", "Competing consumers", "Sharding & quorum replication", "Visibility timeout & DLQ"],
+  "specs": {
+    "functional": [
+      "Send messages, receive them with a visibility timeout, and ack/delete successful deliveries",
+      "Shard queues across brokers and replicate each queue before acknowledging durable sends",
+      "Distribute deliveries among competing Workers and retry unacknowledged messages",
+      "Move poison messages to a Dead Letter Queue after N unsuccessful attempts",
+      "Maintain broker membership, queue leadership and metadata through ZooKeeper/etcd"
+    ],
+    "nonFunctional": [
+      "Scale broker throughput and consumer concurrency independently",
+      "Preserve accepted messages through broker failures using quorum replication",
+      "Use idempotent consumer side effects to tolerate duplicate delivery"
+    ],
+    "constraints": [
+      "Producer-to-consumer paths must pass through a Message Queue",
+      "Producers must not call Workers or ZooKeeper/etcd directly",
+      "Keep coordination metadata separate from message payloads"
+    ],
+    "budgetPerHr": 4.0,
+    "latencyTargetMs": 90,
+    "capacity": [
+      "Partition queues across broker nodes as send/receive throughput grows",
+      "Choose visibility timeout from processing duration; move messages after N failed attempts",
+      "Use a majority-based replica set per queue; three replicas normally tolerate one failed member"
+    ],
+    "tradeoff": "At-least-once delivery favors durability over duplicate-free side effects. Longer visibility timeouts reduce premature retries but delay recovery after a consumer dies; competing consumers scale work while sacrificing a single global completion order.",
+    "bonus": "Route Load Balancer → Pub/Sub → Message Queue for a fan-out exchange and add Monitoring for backlog and delivery failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client producer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route producers through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "message-queue", "label": "Balance sends across queue brokers" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch deliveries to competing Workers" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Isolate failed messages in a Dead Letter Queue" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "zookeeper-etcd", "label": "Coordinate broker membership and queue leadership" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "pub-sub", "label": "Route fan-out sends to Pub/Sub", "bonus": true },
+    { "id": "m8", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "message-queue", "label": "Fan out copies into subscriber queues", "bonus": true },
+    { "id": "m9", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for queue health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "worker",
+      "message": "Producers send through brokers instead of invoking consumers directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "client",
+      "toComponentId": "worker",
+      "message": "Every producer-to-consumer path must pass through a Message Queue."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "zookeeper-etcd",
+      "message": "Producers access brokers, not the membership and leadership coordinator."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "message-queue",
+      "message": "Run at least two broker nodes and replicate queues so one broker is not the only host."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so consumption can continue when one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "Connect queue brokers to a Dead Letter Queue for poison messages."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "zookeeper-etcd",
+      "message": "Connect brokers to ZooKeeper/etcd for membership and queue leadership."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "message-queue", "worker", "dead-letter-queue", "zookeeper-etcd", "pub-sub", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Message Queue → Worker. The Client produces messages and the Worker consumes them; the queue owns visibility timeout and acknowledgement state.",
+    "Connect Message Queue → Dead Letter Queue for messages that exhaust retries and → ZooKeeper/etcd for membership and leadership. Keep both the coordinator and consumers behind brokers.",
+    "Use two Message Queues and two Workers: balance to both brokers and connect each broker to both Workers, the DLQ and ZooKeeper/etcd. Add Load Balancer → Pub/Sub → both brokers for fan-out and connect both brokers to Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-distributed-queue-like-rabbitmq",
+  "tips": [
+    "How do you deal with high throughput?",
+    "When would you use a queue vs a pub-sub system?",
+    "How do you partition and scale horizontally?",
+    "How do you deal with machine failures?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/206134/Amazon-or-System-Design-or-Design-a-Distributed-Message-queue",
+      "kind": "discussion"
+    },
+    {
+      "title": "Good detailed explanation",
+      "url": "https://docs.google.com/document/d/1pOarvQbjzLd9tz5ZuxktyrYsZ41mbWba5_LUeFj65lI/edit?tab=t.0#heading=h.iq7ofd902vlf",
+      "kind": "article"
+    },
+    {
+      "title": "Mock Interview",
+      "url": "https://www.tryexponent.com/blog/distributed-message-queue-system-design-mock-interview",
+      "kind": "article"
+    },
+    {
+      "title": "Detailed explanation video",
+      "url": "https://www.youtube.com/watch?v=iJLL-KPqBpM",
+      "kind": "video"
+    }
+  ]
+}

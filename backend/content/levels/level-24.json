@@ -1,0 +1,124 @@
+{
+  "id": "level-24",
+  "actId": "act-4",
+  "order": 24,
+  "title": "Web Analytics Pipeline",
+  "difficulty": "hard",
+  "summary": "Collect browser events into a durable analytics pipeline for real-time dashboards and historical reports.",
+  "narrative": "A tracking script on customer sites sends page-view and custom-event beacons at ~1 M events/s peak. The Client represents the visitor's browser and also the site owner's dashboard. Batch events in the browser, keep stable event IDs across retries and use navigator.sendBeacon for page-exit delivery. Beacon queuing does not guarantee arrival: retry buffered events when possible and deduplicate accepted events downstream. This provides at-least-once processing for accepted events, while blocked scripts, offline exits and lost browser state still limit capture completeness.\n\nRoute traffic through a Load Balancer to redundant Web Servers that expose the collector and dashboard APIs. On collection, validate tenant, schema and event identity, then append to replicated Message Queues before acknowledging acceptance; keep aggregation and batch loading off that request path. Stream Processors deduplicate by event ID and compute active users and rolling aggregates for the last 30 min in a Time-Series Database. Keep repeated dashboard range queries fast with a Cache in front of the analytical stores.\n\nWorkers consume a separate queue subscription or consumer group so the batch branch sees the same events as streaming, rather than competing with it. The Workers archive raw batches in Blob Storage and batch-load a columnar Data Warehouse for historical reports. Make batch commits idempotent, retain progress for retries, and route poison events to a Dead Letter Queue for inspection and controlled redrive. Dashboard APIs can read the time-series store for recent activity and the warehouse for historical reports. Optional Monitoring tracks ingestion loss signals, backlog and end-to-end freshness; visitors never access the analytical stores directly.",
+  "objectives": ["Browser event delivery", "Streaming vs batch analytics", "Event-ID deduplication", "Real-time & historical views"],
+  "specs": {
+    "functional": [
+      "Collect page-view and custom-event beacons, validating and enqueueing accepted events",
+      "Deduplicate stable event IDs and aggregate active users over the last 30 minutes",
+      "Store streaming aggregates in a Time-Series Database",
+      "Use Workers to archive raw batches in Blob Storage and batch-load a columnar Data Warehouse",
+      "Cache dashboard query results and route poison events to a Dead Letter Queue"
+    ],
+    "nonFunctional": [
+      "Sustain ~1 M events/s at peak with buffering and backpressure",
+      "Process accepted events at least once with idempotent downstream effects",
+      "Keep real-time and historical ingestion independent through separate consumption progress",
+      "Continue collection after a web-server or broker failure"
+    ],
+    "constraints": [
+      "Clients must not access the Data Warehouse or Time-Series Database directly",
+      "Collector-to-Stream Processor paths must pass through the Message Queue",
+      "Keep collector work limited to validation and durable append",
+      "Give streaming and batch consumers independent subscriptions or groups; preserve event IDs across retries"
+    ],
+    "budgetPerHr": 7.0,
+    "latencyTargetMs": 350,
+    "capacity": [
+      "~1 M events/s peak; size storage from measured average event bytes and sustained rate",
+      "Real-time dashboard window: active users and aggregates over the last 30 min",
+      "Browser batching and sendBeacon improve delivery but cannot guarantee capture of every visit"
+    ],
+    "tradeoff": "Streaming gives fresh dashboards while batch loading enables efficient historical scans. Maintaining both paths duplicates processing and requires consistent event identities and idempotent commits. Browser batching reduces request overhead but adds delay and cannot eliminate loss from offline exits or blocked scripts.",
+    "bonus": "Connect Web Server → Time-Series Database and → Data Warehouse for recent and historical dashboard reads, and add Monitoring for collection health and freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route beacons and dashboard requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance collector and dashboard API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append validated events to the Message Queue" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Stream events into real-time aggregation" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "timeseries-db", "label": "Store real-time analytics aggregates" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Feed events to the batch loader" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Archive raw event batches in Blob Storage" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "data-warehouse", "label": "Batch-load historical events into the Data Warehouse" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache dashboard query results" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Isolate poison events in a Dead Letter Queue" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "timeseries-db", "label": "Query recent aggregates for dashboard reads", "bonus": true },
+    { "id": "m12", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "data-warehouse", "label": "Query historical reports from the Data Warehouse", "bonus": true },
+    { "id": "m13", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for analytics pipeline health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "data-warehouse",
+      "message": "Dashboards query the Data Warehouse through the Web Server API."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "timeseries-db",
+      "message": "Browsers access recent analytics through the API, never directly in the Time-Series Database."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Buffer accepted events in the Message Queue before streaming aggregation."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so collection and dashboard APIs survive one failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "message-queue",
+      "message": "Run at least two Message Queue brokers with replicated accepted events."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "Connect queue brokers to a Dead Letter Queue for poison events and controlled redrive."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "stream-processor", "worker", "timeseries-db", "blob-storage", "data-warehouse", "cache", "dead-letter-queue", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server → Message Queue. The Client covers beacons and dashboard requests; keep collection to validation and durable append.",
+    "Split queue consumption into Message Queue → Stream Processor → Time-Series Database and Message Queue → Worker → Blob Storage and → Data Warehouse. Use independent subscriptions or groups so both branches receive every event, then connect the queue to a DLQ and Web Server to Cache.",
+    "Use two Web Servers and two queue brokers. Each Web Server reaches both brokers and Cache; each broker feeds the Stream Processor, Worker and DLQ. Preserve both storage branches, then add each Web Server → Time-Series Database, → Data Warehouse and → Monitoring for dashboard reads and health."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-google-analytics-dashboard-and-pipeline",
+  "tips": [
+    "How do you collect and present real time data?",
+    "How will you ensure that all user visits are being transmitted?",
+    "How do you store and structure the data?",
+    "How do you ensure high throughput of user events?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/562404/system-designmicrosoft-real-time-analytics",
+      "kind": "discussion"
+    },
+    {
+      "title": "Facebook EM's Mock Interview",
+      "url": "https://www.youtube.com/watch?v=kIcq1_pBQSY",
+      "kind": "video"
+    },
+    {
+      "title": "Designing a Dashboard with Data with FAANG Engineer",
+      "url": "https://www.youtube.com/watch?v=8_5Gve7aNRk",
+      "kind": "video"
+    }
+  ]
+}

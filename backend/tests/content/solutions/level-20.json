@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    { "id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0 },
+    { "id": "message-queue1", "componentId": "message-queue", "displayName": "Message Queue 1", "note": "", "x": 220, "y": 0 },
+    { "id": "message-queue2", "componentId": "message-queue", "displayName": "Message Queue 2", "note": "", "x": 220, "y": 140 },
+    { "id": "zookeeper-etcd", "componentId": "zookeeper-etcd", "displayName": "ZooKeeper / etcd", "note": "", "x": 440, "y": 0 },
+    { "id": "stream-processor1", "componentId": "stream-processor", "displayName": "Stream Processor 1", "note": "", "x": 660, "y": 0 },
+    { "id": "stream-processor2", "componentId": "stream-processor", "displayName": "Stream Processor 2", "note": "", "x": 660, "y": 140 },
+    { "id": "nosql-database", "componentId": "nosql-database", "displayName": "NoSQL Database", "note": "", "x": 880, "y": 0 },
+    { "id": "blob-storage", "componentId": "blob-storage", "displayName": "Blob Storage", "note": "", "x": 1100, "y": 0 },
+    { "id": "monitoring", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 1320, "y": 0 }
+  ],
+  "edges": [
+    { "id": "client-message-queue1", "sourceNodeId": "client", "targetNodeId": "message-queue1" },
+    { "id": "client-message-queue2", "sourceNodeId": "client", "targetNodeId": "message-queue2" },
+    { "id": "message-queue1-zookeeper-etcd", "sourceNodeId": "message-queue1", "targetNodeId": "zookeeper-etcd" },
+    { "id": "message-queue2-zookeeper-etcd", "sourceNodeId": "message-queue2", "targetNodeId": "zookeeper-etcd" },
+    { "id": "message-queue1-stream-processor1", "sourceNodeId": "message-queue1", "targetNodeId": "stream-processor1" },
+    { "id": "message-queue1-stream-processor2", "sourceNodeId": "message-queue1", "targetNodeId": "stream-processor2" },
+    { "id": "message-queue2-stream-processor1", "sourceNodeId": "message-queue2", "targetNodeId": "stream-processor1" },
+    { "id": "message-queue2-stream-processor2", "sourceNodeId": "message-queue2", "targetNodeId": "stream-processor2" },
+    { "id": "message-queue1-blob-storage", "sourceNodeId": "message-queue1", "targetNodeId": "blob-storage" },
+    { "id": "message-queue2-blob-storage", "sourceNodeId": "message-queue2", "targetNodeId": "blob-storage" },
+    { "id": "message-queue1-monitoring", "sourceNodeId": "message-queue1", "targetNodeId": "monitoring" },
+    { "id": "message-queue2-monitoring", "sourceNodeId": "message-queue2", "targetNodeId": "monitoring" },
+    { "id": "stream-processor1-nosql-database", "sourceNodeId": "stream-processor1", "targetNodeId": "nosql-database" },
+    { "id": "stream-processor2-nosql-database", "sourceNodeId": "stream-processor2", "targetNodeId": "nosql-database" }
+  ]
+}

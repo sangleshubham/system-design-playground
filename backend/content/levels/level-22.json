@@ -1,0 +1,121 @@
+{
+  "id": "level-22",
+  "actId": "act-4",
+  "order": 22,
+  "title": "Distributed Logging & Search",
+  "difficulty": "expert",
+  "summary": "Ingest distributed logs into searchable hot indices and durable cold archives while streaming live matches.",
+  "narrative": "Agents on every EC2 host tail files, retain their read positions and batch log lines. The Client represents both these host agents and the engineer's browser for search and live tail. Plan for ~1 M lines/s: at ~120 bytes per line that is ~120 MB/s, or ~10 TB/day of raw logs, which compresses to roughly ~1 TB/day (~10:1) in the archive. Engineers need full-text search over the last 7 days in seconds and a 1-year cold archive in object storage.\n\nRoute ingestion and query traffic through a Load Balancer to Web Servers. Ingestion appends to replicated Message Queues, which buffer bursts before a Stream Processor parses, enriches and indexes records. Store the hot tier in time-partitioned Search Index shards with replicas, and write compressed raw batches to Blob Storage for cold retention and reindexing. The Web Server query path selects relevant time indices, searches shards and merges results; archival retrieval requires reading or reindexing cold objects rather than pretending they are a live full-text index.\n\nFor live tail, publish processed lines through Pub/Sub to a WebSocket Server reached through the Load Balancer. The WebSocket tier checks the browser's authorized subscriptions and streams new matching lines, with bounded buffering and reconnect handling. Replicate Web Servers, queue brokers and search nodes; optionally cache recent query results and add Monitoring for ingestion lag and index failures. Assemble this service from ingestion, buffering, processing and storage components: it is itself the log aggregator.",
+  "objectives": ["Agent batching & buffering", "Hot search vs cold archive", "Time-partitioned indices", "Live log tail"],
+  "specs": {
+    "functional": [
+      "Collect batched log lines from host agents through the ingestion API",
+      "Queue, parse, enrich and index logs in the Search Index",
+      "Retain 7 searchable days and archive raw logs in Blob Storage for 1 year",
+      "Query relevant time-partitioned indices and return merged full-text results",
+      "Publish new lines through Pub/Sub and stream authorized matches over WebSockets"
+    ],
+    "nonFunctional": [
+      "Sustain ~1 M lines/s with buffering and backpressure for bursts",
+      "Search the last 7 days in seconds",
+      "Maintain ingestion and hot search through a single web-server, broker or search-node failure"
+    ],
+    "constraints": [
+      "Clients must query the Search Index through the Web Server API",
+      "Web Server ingestion reaches Stream Processors through the Message Queue",
+      "Build the aggregation service from its parts rather than using the Log Aggregator component",
+      "Separate raw-object retention from searchable hot indices and enforce subscription access controls"
+    ],
+    "budgetPerHr": 7.0,
+    "latencyTargetMs": 150,
+    "capacity": [
+      "~1 M lines/s × ~120 B/line ≈ 120 MB/s ≈ 10 TB/day raw; ≈ 1 TB/day after ~10:1 compression",
+      "7-day searchable hot tier; 1-year cold archive",
+      "Hot tier: ~70 TB of raw logs for 7 days before index overhead and replicas; cold archive: ~365 TB/year compressed"
+    ],
+    "tradeoff": "Time-partitioned hot indices make recent search fast but consume more space than compressed raw objects. Cold storage reduces retention cost while requiring slower retrieval or reindexing. Live tail provides immediate matches but needs bounded per-client buffering so a slow browser cannot stall ingestion.",
+    "bonus": "Connect Web Server → Cache for recent query results and add Monitoring for backlog, processing errors and search health."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route agents and browsers through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance ingestion and search API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Buffer log batches in the Message Queue" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Parse and enrich queued log records" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "search-index", "label": "Index hot logs for full-text search" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "blob-storage", "label": "Archive raw log batches in Blob Storage" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Search the relevant hot indices" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "pub-sub", "label": "Publish processed log lines for live tail" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Deliver live matches to the WebSocket tier" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "websocket-server", "label": "Route browser live-tail connections" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache recent search results", "bonus": true },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for log pipeline health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "search-index",
+      "message": "Clients search through the Web Server API instead of accessing indices directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Log ingestion must pass through the Message Queue before parsing and indexing."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers for ingestion and search availability."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "message-queue",
+      "message": "Run at least two Message Queue brokers with replicated ingestion buffers."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "search-index",
+      "message": "Run at least two Search Index nodes with replicated shards for hot-search availability."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "stream-processor", "search-index", "blob-storage", "pub-sub", "websocket-server", "cache", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server → Message Queue. The Client covers host agents as well as browsers; buffer ingestion before parsing.",
+    "Connect Message Queue → Stream Processor → Search Index and → Blob Storage for hot search and cold archive. Add Web Server → Search Index for queries, then Stream Processor → Pub/Sub → WebSocket Server and Load Balancer → WebSocket Server for live tail.",
+    "Use two Web Servers, two Message Queues and two Search Index nodes. Connect each Web Server to both brokers and both search nodes; both brokers feed the processor, which indexes into both search nodes. Preserve the archive and live-tail paths, then add each Web Server → Cache and → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-metrics-logging-and-aggregation-system",
+  "tips": [
+    "Let's assume the logs are generated from a distributed system, e.g, an EC2 compute cluster.",
+    "How to collect logs efficiently from distributed systems?",
+    "How to store and index logs for fast retrieval?",
+    "When you search for logs, what happens?",
+    "How about live streaming logs? How would that work?"
+  ],
+  "resources": [
+    {
+      "title": "Detailed Solution from Google Engineer",
+      "url": "https://www.youtube.com/watch?v=p_q-n09B8KA",
+      "kind": "video"
+    },
+    {
+      "title": "Good overview from Google Engineer",
+      "url": "https://www.youtube.com/watch?v=_KoiMoZZ3C8",
+      "kind": "video"
+    },
+    {
+      "title": "Related - Ad Click Aggregation",
+      "url": "https://www.hellointerview.com/learn/system-design/problem-breakdowns/ad-click-aggregator",
+      "kind": "article"
+    },
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/622704/Design-a-system-to-store-and-retrieve-logs-for-all-of-eBay",
+      "kind": "discussion"
+    }
+  ]
+}

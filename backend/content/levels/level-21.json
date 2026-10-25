@@ -1,0 +1,110 @@
+{
+  "id": "level-21",
+  "actId": "act-4",
+  "order": 21,
+  "title": "Metrics Collection at Scale",
+  "difficulty": "hard",
+  "summary": "Collect server metrics through a buffered push pipeline, query time-series dashboards and send timely alerts.",
+  "narrative": "Collect CPU, memory, disk, network, request-rate and error metrics from 10 K servers every 10 s. At ~100 metrics per server, ingestion is 10,000 × 100 / 10 ≈ 100 K points/s. The Client here is the metrics agent on each host, pushing batches through a Load Balancer to the Web Server ingestion API; that API also serves dashboard queries. Show graphs over windows from 1 hour to 30 days and alert within a minute of a threshold breach.\n\nBuffer accepted samples in a Message Queue, then use Stream Processors to validate labels, aggregate, downsample and evaluate alert rules. Write timestamped series to a replicated Time-Series Database and send deduplicated alerts through the Notification Service. Bound label cardinality so user IDs or arbitrary request URLs do not create unbounded series. A rollup hierarchy of 1 s → 1 min → 1 h buckets makes long ranges cheaper, but sampling hosts every 10 s cannot create genuine 1 s observations; use the finest available samples before coarser rollups.\n\nThe Web Server queries the Time-Series Database to render dashboard graphs; optionally cache repeated range queries and archive rolled-up series in Blob Storage. Replicate ingestion servers, processors and the time-series store. This pipeline is itself the monitoring system. A pull alternative, such as Prometheus-style scraping with service discovery, centralizes scrape cadence and reveals unreachable targets, but requires network reachability and discovery at scraper scale. Push suits agents behind restricted networks, while needing authentication, retry/backpressure and missing-agent detection.",
+  "objectives": ["Push vs pull collection", "Time-series rollups", "Dashboard range queries", "Threshold alerting"],
+  "specs": {
+    "functional": [
+      "Accept pushed CPU, memory, disk, network, request-rate and error samples from host agents",
+      "Buffer ingestion in a Message Queue before aggregation and alert evaluation",
+      "Store timestamped series and downsampled rollups in the Time-Series Database",
+      "Serve dashboard graphs for 1-hour-to-30-day ranges through the Web Server query API",
+      "Evaluate threshold rules and send deduplicated notifications"
+    ],
+    "nonFunctional": [
+      "Sustain ~100 K metric points/s",
+      "Alert within one minute of a threshold breach",
+      "Survive a single ingestion-server, processor or time-series-node failure"
+    ],
+    "constraints": [
+      "Host agents must not access the Time-Series Database directly",
+      "Web Server ingestion must pass through the Message Queue before Stream Processors",
+      "Build the monitoring pipeline from its parts rather than using the Monitoring component",
+      "Bound label cardinality and preserve sample timestamps; rollups cannot invent finer observations"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 220,
+    "capacity": [
+      "10 K servers × ~100 metrics / 10 s ≈ 100 K points/s",
+      "Dashboard ranges: 1 hour to 30 days; collection interval: 10 s",
+      "Rollup hierarchy: 1 s → 1 min → 1 h where source resolution permits"
+    ],
+    "tradeoff": "Push handles agents that cannot accept inbound scrapes but needs retry, backpressure and missing-agent detection. Pull with service discovery centralizes cadence and exposes failed scrapes. Coarse rollups reduce range-query cost while discarding short spikes, so retain raw samples for recent troubleshooting.",
+    "bonus": "Connect the Web Server to a Cache for repeated dashboard queries and Time-Series Database → Blob Storage for archived rollups."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client metrics agent" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route metric batches through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance ingestion and dashboard API requests" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Buffer metric samples in the Message Queue" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Aggregate samples and evaluate alert rules" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "timeseries-db", "label": "Store metric series and rollups" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "notification-service", "label": "Send threshold alerts through the Notification Service" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "timeseries-db", "label": "Query time-series data for dashboards" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache repeated dashboard range queries", "bonus": true },
+    { "id": "m10", "kind": "connect", "fromComponentId": "timeseries-db", "toComponentId": "blob-storage", "label": "Archive rolled-up series in Blob Storage", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "timeseries-db",
+      "message": "Host agents submit metrics through ingestion rather than writing directly to the time-series store."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Buffer ingestion in the Message Queue before Stream Processor aggregation."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so ingestion and dashboard queries survive one failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors so aggregation and alert evaluation can continue after a failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "timeseries-db",
+      "message": "Run at least two Time-Series Database nodes with replicated series."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "stream-processor", "timeseries-db", "notification-service", "cache", "blob-storage"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server → Message Queue. The Client is a host metrics agent; use the Web Server as the ingestion and query API.",
+    "Connect Message Queue → Stream Processor → Time-Series Database for aggregation and rollups, plus Stream Processor → Notification Service for alerts. Connect Web Server → Time-Series Database for dashboard queries.",
+    "Use two Web Servers, two Stream Processors and two Time-Series Database nodes. Each Web Server reaches the queue and both database nodes; the queue reaches both processors, and each processor reaches both databases and the Notification Service. Add Web Server → Cache and each database → Blob Storage."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/system-to-collect-metrics-from-thousands-of-servers",
+  "tips": [
+    "What kind of metrics will you pull from the servers?",
+    "How do you fetch metrics? Do you use push or pull?",
+    "How often do you collect metrics?",
+    "Where do you store metrics and query them?",
+    "How do you display the metrics?",
+    "How do you send alerts? When will you send them?"
+  ],
+  "resources": [
+    {
+      "title": "Good solution",
+      "url": "https://systemdesignschool.io/problems/realtime-monitoring-system/solution",
+      "kind": "article"
+    },
+    {
+      "title": "Nice article with overview",
+      "url": "https://archive.is/Eezec",
+      "kind": "article"
+    }
+  ]
+}

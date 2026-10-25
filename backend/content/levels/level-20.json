@@ -1,0 +1,123 @@
+{
+  "id": "level-20",
+  "actId": "act-4",
+  "order": 20,
+  "title": "Distributed Log (Kafka)",
+  "difficulty": "expert",
+  "summary": "Design a partitioned, replicated event log whose consumer groups can retain offsets and replay history.",
+  "narrative": "The Client is the producer, and Message Queue tiles represent Kafka brokers that retain records in a distributed log. Split each topic into partitions: a partition is an append-only ordered sequence, and an article or account key can consistently select its partition. Ordering is per partition, with no global ordering across the topic. Consumers track offsets and can replay retained records; a consumer acknowledgement advances progress rather than deleting the record as a work queue would.\n\nProducers fetch broker metadata and send directly to partition leaders, without a Load Balancer or a direct coordinator connection. Leaders replicate to followers in the in-sync replica set (ISR); acks=all together with an appropriate minimum ISR protects acknowledged writes. Sequential disk appends, the OS page cache, batching, compression and zero-copy sendfile make the log efficient. The ZooKeeper/etcd tile represents the controller metadata role, implemented by ZooKeeper in older deployments or KRaft in newer ones, for broker membership, partition placement and leader election.\n\nStream Processors represent a consumer group: partition assignments divide work among active members, and the group coordinator rebalances assignments when membership changes. Extra consumers beyond the partition count cannot increase parallelism. Persist processed results in a NoSQL sink and commit offsets only after durable handling; use idempotent writes to tolerate replay after a crash. Replicate brokers and run multiple consumers. Optionally offload old log segments to Blob Storage for tiered retention and connect brokers to Monitoring for lag, ISR shrinkage and failed writes.",
+  "objectives": ["Partitioned ordered logs", "ISR & durable writes", "Consumer groups & replay", "Sequential I/O & batching"],
+  "specs": {
+    "functional": [
+      "Append records to topic partitions through their broker leaders",
+      "Replicate partitions with leaders, followers, ISR and acks=all",
+      "Coordinate broker and partition metadata through the controller",
+      "Consume partitions as a group, track offsets and replay retained records",
+      "Persist processed records in a NoSQL sink"
+    ],
+    "nonFunctional": [
+      "Scale throughput through partitioning, batching and compression",
+      "Continue processing after broker or consumer failures with suitable replica and partition assignments",
+      "Keep accepted records durable using acks=all and minimum ISR enforcement"
+    ],
+    "constraints": [
+      "Producers connect directly to brokers using broker metadata, without a Load Balancer",
+      "Client-to-consumer paths must pass through brokers",
+      "Clients obtain metadata from brokers, never directly from ZooKeeper/etcd",
+      "Preserve order within each partition; do not promise global topic order"
+    ],
+    "budgetPerHr": 4.5,
+    "latencyTargetMs": 80,
+    "capacity": [
+      "Size partition count for peak producer throughput and consumer parallelism",
+      "At most one active consumer per partition within a consumer group",
+      "Replica factor and minimum ISR determine failure tolerance; retention determines replay depth"
+    ],
+    "tradeoff": "Retaining an immutable log enables independent consumer groups and replay, at the cost of disk retention and offset management. More partitions increase parallelism but add replication and coordination overhead; batching improves throughput while increasing time before a batch is sent.",
+    "bonus": "Connect brokers to Blob Storage for tiered old segments and add Monitoring for replication health and consumer lag."
+  },
+  "missions": [
+    { "id": "m1", "kind": "add", "componentId": "client", "label": "Add a Client producer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "message-queue", "label": "Send records directly to broker leaders" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "zookeeper-etcd", "label": "Coordinate broker and partition metadata" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Feed a Stream Processor consumer group" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "nosql-database", "label": "Persist consumer results in NoSQL" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "blob-storage", "label": "Offload old log segments to Blob Storage", "bonus": true },
+    { "id": "m7", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for broker health and lag", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "stream-processor",
+      "message": "Producers append to brokers instead of invoking consumer groups directly."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "client",
+      "toComponentId": "stream-processor",
+      "message": "Producer-to-consumer paths must pass through the retained broker log."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "zookeeper-etcd",
+      "message": "Clients get metadata from brokers, not the coordinator."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "message-queue",
+      "message": "Run at least two brokers to represent a fleet with replicated partitions."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors to distribute consumer-group partitions."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "zookeeper-etcd",
+      "message": "Connect brokers to the controller metadata service for membership and leadership."
+    }
+  ],
+  "recommendedComponentIds": ["client", "message-queue", "zookeeper-etcd", "stream-processor", "nosql-database", "blob-storage", "monitoring"],
+  "hints": [
+    "Connect Client → Message Queue directly: this Client is a producer and the queue tile represents a retained broker log. Producers use broker metadata to find partition leaders.",
+    "Connect brokers to ZooKeeper/etcd for controller metadata and to Stream Processors for the consumer group. Connect each processor to NoSQL for a durable sink; track offsets and make replay idempotent.",
+    "Use two brokers and two Stream Processors. Connect the Client to both brokers, each broker to ZooKeeper/etcd and both processors, and each processor to NoSQL. Add each broker → Blob Storage for old segments and → Monitoring; keep the producer off the coordinator and consumer paths."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-stream-processing-system-like-kafka",
+  "tips": [
+    "Go over how Kafka might be designed.",
+    "What is the difference between Kafka and RabbitMQ?",
+    "How does Kafka ensure fast writes to the stream? Why is it fast?",
+    "How to scale it so that it can handle Facebook-level stream of data?",
+    "How to do the following: Fault Tolerance, Partitioning, Balancing Workloads across Nodes"
+  ],
+  "resources": [
+    {
+      "title": "Original Kafka paper (no need to finish it)",
+      "url": "https://notes.stephenholiday.com/Kafka.pdf",
+      "kind": "paper"
+    },
+    {
+      "title": "Great overview",
+      "url": "https://medium.com/better-programming/system-design-series-apache-kafka-from-10-000-feet-9c95af56f18d",
+      "kind": "article"
+    },
+    {
+      "title": "Solution from Meta Engineer",
+      "url": "https://www.youtube.com/watch?v=DU8o-OTeoCc",
+      "kind": "video"
+    },
+    {
+      "title": "Good visualization",
+      "url": "https://www.youtube.com/watch?v=HZklgPkboro",
+      "kind": "video"
+    }
+  ]
+}
