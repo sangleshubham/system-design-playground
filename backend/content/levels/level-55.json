@@ -1,0 +1,118 @@
+{
+  "id": "level-55",
+  "actId": "act-10",
+  "order": 55,
+  "title": "Cluster Health Monitor",
+  "difficulty": "medium",
+  "summary": "Detect unhealthy nodes within ~30 s from heartbeats and metrics, confirm with probes, page the on-call, run safe automated remediation and show a live status board.",
+  "narrative": "Design a system that knows within ~30 s when any node or service in a cluster is unhealthy, alerts the on-call, fixes common failures automatically and shows the cluster's state on a dashboard. Unlike collecting metrics at scale, the focus here is failure detection and automated action. The Client here is both the agents running on every cluster node and the engineers opening the dashboard. Health is tracked through a liveness heartbeat, CPU, memory, disk space, disk and network errors, whether each process is up, and request error rate and latency. With 10 K nodes each sending 1 heartbeat plus ~100 metrics every 10 s, that is ≈ 100 K points/s in ~1 K agent requests/s, and ~200 engineers use the dashboard.\n\nEach agent pushes its heartbeat and metrics every 10 s through a Load Balancer to stateless ingest Web Servers, which put them on a Message Queue partitioned by node id. Stream Processors consume the queue and act as the failure detector and rules engine; each owns a set of partitions, and if one fails another takes them over. Every metric point is written to the Time-Series DB, and the current health state of each node and service — last heartbeat, status and since when — is kept in the Cache. A node that misses 3 heartbeats (30 s) is only suspected down: the detector confirms it with an active probe, a direct health check of the node, before acting, so a network blip doesn't trigger a false alarm. Every state change is logged to the Time-Series DB as a status event, so the history of each node can be replayed.\n\nEvery metric has thresholds evaluated over a window — for example disk above 90 % for 5 minutes, or an error rate above 5 % for 2 minutes — and an action for each: page the on-call through the Notification Service, and/or publish a remediation action back onto the Message Queue for Workers to run a runbook such as restarting the process or draining and replacing the node. Automation has safety limits: never auto-restart more than a few % of the cluster at once and wait a cooldown before repeating an action on the same node; if many nodes fail together, the cause is more likely the network or the monitor itself, so the system pages a human instead. Engineers see a status board served by the Web Servers from the Cache and charts drawn from the Time-Series DB. Optionally, Workers record every automated action in an audit log in a SQL Database, and the Time-Series DB downsamples old points and archives them to Blob Storage.",
+  "objectives": ["Heartbeats & metrics", "Failure detection with probes", "Per-metric actions & safe remediation", "Status board & charts"],
+  "specs": {
+    "functional": [
+      "Agents push a heartbeat plus metrics every 10 s: CPU, memory, disk space, disk and network errors, process up, request error rate and latency",
+      "Suspect a node after 3 missed heartbeats and confirm with an active probe before acting",
+      "Write every metric point to the Time-Series DB and keep the current health state per node and service in the Cache; log every state change",
+      "Evaluate per-metric thresholds over a window; page the on-call and/or queue a remediation runbook (restart, drain, replace) for Workers",
+      "Show a status board and charts on the dashboard"
+    ],
+    "nonFunctional": [
+      "Detect an unhealthy node or service within ~30 s",
+      "10 K nodes × (1 heartbeat + ~100 metrics) every 10 s ≈ 100 K points/s",
+      "The failure detector itself has no single point of failure",
+      "Never auto-restart more than a few % of the cluster at once"
+    ],
+    "constraints": [
+      "Ingest Web Servers hand heartbeats and metrics to the detector only through the Message Queue",
+      "Remediation is triggered by the rules engine, never by the ingest path",
+      "Confirm a suspected failure with an active probe before acting on it"
+    ],
+    "budgetPerHr": 6,
+    "latencyTargetMs": 210,
+    "capacity": [
+      "10 K nodes × 101 points / 10 s ≈ 100 K points/s in ~1 K agent requests/s",
+      "3 missed heartbeats × 10 s = 30 s to suspicion",
+      "~200 engineers on the dashboard"
+    ],
+    "tradeoff": "A shorter heartbeat interval or fewer allowed misses detects failures sooner but raises ingest load and false alarms; probing before acting adds a few seconds but avoids restarting healthy nodes after a network blip. Automated remediation fixes common failures in seconds, but without safety limits a monitoring bug or a network partition could restart large parts of the cluster at once.",
+    "bonus": "Connect Worker → SQL Database for an audit log of every automated action, and Time-Series DB → Blob Storage to downsample and archive old points."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Send heartbeats and dashboard requests to the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Serve ingest and the dashboard API" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Queue heartbeats and metrics" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Detect failures and evaluate rules" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "timeseries-db", "label": "Store metric points and state changes" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Keep current health state per node" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "notification-service", "label": "Page the on-call" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "message-queue", "label": "Publish remediation actions" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Run restart, drain and replace runbooks" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "timeseries-db", "label": "Draw dashboard charts" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Serve the status board" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Audit every automated action", "bonus": true },
+    { "id": "m13", "kind": "connect", "fromComponentId": "timeseries-db", "toComponentId": "blob-storage", "label": "Downsample and archive old points", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Hand heartbeats and metrics from the ingest Web Servers to the failure detector through the Message Queue."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "worker",
+      "message": "Remediation is triggered by the rules engine, not by the ingest path."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so ingest and the dashboard survive one instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "The failure detector must not itself be a single point of failure — run at least two Stream Processors."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "stream-processor",
+      "companionComponentId": "cache",
+      "message": "Keep the current health state per node in a Cache connected to the failure detector."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "stream-processor", "timeseries-db", "cache", "notification-service", "worker", "sql-database", "blob-storage"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server for both agent ingest and the dashboard. Wire Web Server → Message Queue → Stream Processor, the failure detector and rules engine.",
+    "The Stream Processor writes metric points to the Time-Series DB, current health state to the Cache and pages through the Notification Service. For remediation it publishes back to the Message Queue, which feeds a Worker that runs the runbooks.",
+    "Run two Web Servers, each reaching the Message Queue, the Time-Series DB and the Cache, and two Stream Processors, each reaching the Time-Series DB, Cache, Notification Service and Message Queue. Connect Worker → SQL Database for the audit log and Time-Series DB → Blob Storage for archives."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-system-to-monitor-the-health-of-a-cluster",
+  "tips": [
+    "What metrics will you track for health?",
+    "How will you collect those metrics? Will you utilize a heartbeat?",
+    "How will you log the status of each metric?",
+    "What will you do if a metric is down? Will you have an action for each metric? For example, if a cluster is not responding, will you ask for a restart?",
+    "How will you display the monitoring to the user? Through a dashboard?"
+  ],
+  "resources": [
+    {
+      "title": "Good starting point: Interview experience",
+      "url": "https://medium.com/%40ajingnv/system-design-a-server-health-monitoring-system-9bdd0066bb9c",
+      "kind": "article"
+    },
+    {
+      "title": "Solution",
+      "url": "https://systemdesignschool.io/problems/realtime-monitoring-system/solution",
+      "kind": "article"
+    },
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/958919/System-Design-Interview-or-Service-Health-Monitoring-and-Alerting-Service",
+      "kind": "discussion"
+    }
+  ]
+}

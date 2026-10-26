@@ -1776,7 +1776,7 @@ Resilience: no-spof reverse-proxy; no-spof nosql-database ("replicate every part
 no-spof zookeeper-etcd ("run a quorum"); requires-companion message-queue ↔ worker.
 
 Reference: client → api-gateway → auth-service, web-server; web-server → sql-database,
-message-queue; message-queue → worker; worker → nosql-database ×2 (both), zookeeper-etcd ×2
-(both), blob-storage; client → load-balancer → reverse-proxy ×2; each reverse-proxy →
+message-queue; message-queue → worker; worker → sql-database (checkpoint workflow steps),
+nosql-database ×2 (both), zookeeper-etcd ×2 (both), blob-storage; client → load-balancer → reverse-proxy ×2; each reverse-proxy →
 zookeeper-etcd ×2 (both), nosql-database ×2 (both); each nosql-database → monitoring;
 monitoring → notification-service.

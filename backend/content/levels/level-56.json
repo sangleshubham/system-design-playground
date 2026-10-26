@@ -1,0 +1,122 @@
+{
+  "id": "level-56",
+  "actId": "act-10",
+  "order": 56,
+  "title": "Distributed Tracing",
+  "difficulty": "expert",
+  "summary": "Trace requests across hundreds of microservices with propagated trace ids, async span export to collectors, head and tail sampling, trace assembly and searchable storage.",
+  "narrative": "Design a distributed tracing system, in the style of Google's Dapper and OpenTelemetry, that follows a single request across hundreds of microservices to show where it was slow or where it failed. The Client here is both the users whose requests are traced and the engineers who look the traces up. The Web Server tier stands for all the instrumented services, and the same tier also hosts the trace query API that engineers use. The fleet serves 1 M requests/s at ~20 spans each ≈ 20 M spans/s unsampled; with 1 % head sampling plus error traces that drops to ≈ 200 K spans/s × ~500 B ≈ 100 MB/s ≈ 8.6 TB/day, kept hot for 7 days (≈ 60 TB).\n\nThe edge service assigns each request a trace id, and every service propagates it to its callees in the W3C traceparent header together with the caller's span id and a sampled flag. An instrumentation library in each service records a span per unit of work — trace id, span id, parent span id, service, operation, start time, duration, status and tags — buffers spans in memory and exports them asynchronously in batches to a nearby Trace Collector, so tracing never blocks or fails a request: when no collector is reachable or the buffer is full, spans are dropped, not retried forever. Head-based sampling decides at the edge which traces to export in full (e.g. 1 %) and the sampled flag carries that decision to every service, bounding the volume; because that would miss most failures, services record every span locally and also export the ones that end in an error or run slower than a threshold. Collectors are stateless and run as a pool, so an exporter simply switches to another collector when one dies. They batch spans into a log on the Message Queue, partitioned by trace id so all spans of a trace land in the same partition.\n\nStream Processors consume the log, assemble spans into traces and make a tail-based sampling decision once a trace's spans have arrived: every trace with an error or high latency is kept — complete if it was head-sampled, otherwise as the error and slow spans the services exported — together with the head-sampled ones. They write each trace to a wide-column NoSQL Database keyed by trace id and index its searchable fields — service, operation, status and duration — in a Search Index. Errors surface in two ways: the Stream Processors raise alerts through the Notification Service when they see a new error signature or an error-rate spike, with links to example trace ids, and engineers open those traces in the UI's waterfall view, where the query API finds trace ids in the Search Index and fetches the stored trace from the NoSQL Database. When machines go down, the log is replicated, a failed Stream Processor's partitions move to another that resumes from the last committed offset, and losing a small fraction of spans is acceptable. Optionally, the NoSQL Database ages traces past the hot window out to Blob Storage, and Monitoring watches span drop rates and pipeline lag.",
+  "objectives": ["Trace ids & span propagation", "Async export to collectors", "Head & tail sampling", "Trace storage, search & alerts"],
+  "specs": {
+    "functional": [
+      "Assign a trace id at the edge and propagate it with the parent span id and sampled flag in the W3C traceparent header",
+      "Record spans (trace id, span id, parent span id, service, operation, start, duration, status, tags) and export them asynchronously in batches to Trace Collectors",
+      "Head-sample ~1 % of traces at the edge and also export error and slow spans; tail-sample in the Stream Processors to keep the spans of every error or high-latency trace",
+      "Assemble traces from a log partitioned by trace id, store them by trace id in a wide-column NoSQL Database and index service, operation, status and duration in a Search Index",
+      "Alert on new error signatures and error-rate spikes with example trace ids, and show any trace as a waterfall"
+    ],
+    "nonFunctional": [
+      "1 M requests/s × ~20 spans ≈ 20 M spans/s before sampling",
+      "~200 K spans/s × ~500 B ≈ 100 MB/s ≈ 8.6 TB/day after sampling; 7 days hot",
+      "Tracing never blocks or fails a request; spans are dropped when the collectors are unreachable",
+      "Survive the loss of a collector or Stream Processor; losing a small fraction of spans is acceptable"
+    ],
+    "constraints": [
+      "Services export spans to a Trace Collector, never straight into the log or to the Stream Processors",
+      "Span export is asynchronous and bounded: buffer, batch and drop, never retry forever",
+      "Partition the span log by trace id so each trace is assembled in one place"
+    ],
+    "budgetPerHr": 6.5,
+    "latencyTargetMs": 210,
+    "capacity": [
+      "20 M spans/s unsampled → ~200 K spans/s after 1 % head sampling plus errors",
+      "~200 K spans/s × ~500 B ≈ 100 MB/s ≈ 8.6 TB/day",
+      "7 days hot ≈ 60 TB in the NoSQL Database before replication"
+    ],
+    "tradeoff": "Head sampling is cheap and keeps whole traces consistent but decides before anyone knows whether a request will fail; tail sampling keeps the interesting traces but must buffer spans until a trace completes. Exporting only error and slow spans outside the head sample keeps volume low, but such traces can miss their successful sibling spans; exporting every span for tail sampling would make them complete at ~100× the volume. Dropping spans under pressure protects production at the cost of occasional gaps.",
+    "bonus": "Connect NoSQL Database → Blob Storage to age traces out to cold storage, and add Monitoring for span drops and pipeline lag."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Send requests and trace queries to the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Route to the instrumented services and query API" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "trace-collector", "label": "Export spans asynchronously" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "trace-collector", "toComponentId": "message-queue", "label": "Log spans partitioned by trace id" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Assemble traces and tail-sample" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "nosql-database", "label": "Store traces by trace id" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "search-index", "label": "Index searchable trace fields" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "notification-service", "label": "Alert on error spikes with example traces" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Find traces" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Fetch a full trace" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "nosql-database", "toComponentId": "blob-storage", "label": "Age traces out to cold storage", "bonus": true },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for span drops and lag", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "required-between",
+      "viaComponentId": "trace-collector",
+      "fromComponentId": "web-server",
+      "toComponentId": "message-queue",
+      "message": "Services export spans to a collector, never straight into the log."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Don't send spans from services straight to the Stream Processors — they flow through the collectors and the log."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "trace-collector",
+      "message": "Run at least two Trace Collectors so services can keep exporting spans when one fails."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors so trace assembly continues when one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "stream-processor",
+      "message": "Connect the span log to Stream Processors that assemble traces."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "trace-collector", "message-queue", "stream-processor", "nosql-database", "search-index", "notification-service", "blob-storage", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server, the instrumented services. Each service exports spans asynchronously: Web Server → Trace Collector → Message Queue, the span log partitioned by trace id.",
+    "Message Queue → Stream Processor assembles traces and tail-samples. It writes traces to a NoSQL Database, indexes fields in a Search Index and alerts through the Notification Service. The query API reads Web Server → Search Index and Web Server → NoSQL Database.",
+    "Run two Web Servers, each connected to both Trace Collectors, the Search Index, NoSQL and Monitoring, and two Stream Processors, each reaching NoSQL, the Search Index and the Notification Service. Connect NoSQL Database → Blob Storage for cold storage."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-distributed-tracing-system",
+  "tips": [
+    "How will you collect information from various parts of your backend?",
+    "Where will you send the info and how will you store it?",
+    "How will you map a trace for a particular request? Will you use a request id, or something else?",
+    "If an error happens, how will you surface relevant information to the system admin?",
+    "How will you handle machines going down?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/313117/Design-a-system-capable-of-tracking-bad-request-down-quickly",
+      "kind": "discussion"
+    },
+    {
+      "title": "Great intro to Tracing",
+      "url": "https://betterstack.com/community/guides/observability/distributed-tracing/",
+      "kind": "article"
+    },
+    {
+      "title": "Dapper research paper",
+      "url": "https://research.google/pubs/pub36356/",
+      "kind": "paper"
+    },
+    {
+      "title": "Solution from FAANG engineer",
+      "url": "https://www.youtube.com/watch?v=Jkhw_FSikX0",
+      "kind": "video"
+    }
+  ]
+}

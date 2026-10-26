@@ -1,0 +1,119 @@
+{
+  "id": "level-57",
+  "actId": "act-10",
+  "order": 57,
+  "title": "Distributed Database Control Plane",
+  "difficulty": "expert",
+  "summary": "Run a DynamoDB-like database: an authenticated management API, desired state in a consistent metadata store, idempotent workflows for tables, splits and backups, and a statically stable data plane.",
+  "narrative": "Design the control plane of a DynamoDB-like managed database. The data plane — request routers and storage nodes — serves reads and writes; the control plane handles everything else: creating, updating and deleting tables, configuration, partition placement, scaling, backups and restores, authentication and authorisation, and health monitoring. The Client here is both the customers and operators calling the management API and the applications sending data-plane reads and writes. The Reverse Proxy plays the request routers, the NoSQL Database plays the storage nodes, and the Web Server is the control-plane service. Plan for ~100 K tables and ~1 K control-plane operations/min, while the data plane serves ~10 M requests/s across ~10 K storage nodes (~1 K requests/s each) with 3 replicas per partition. The key principle is static stability: the data plane must keep serving when the control plane is down, so routers cache the partition map and never call the control plane on a request.\n\nThe management API sits behind an API Gateway that authenticates every call through the Auth Service, with IAM-style policies and API keys deciding who may create, change or read which tables. The control-plane service records the desired state — tables, schemas, capacity, partitions and in-flight operations — in a strongly consistent SQL metadata database. Long-running operations go onto a Message Queue and run as idempotent, resumable workflows on Workers: CreateTable moves a table from CREATING to ACTIVE once its partitions are placed, a split creates two partitions from one, and a backup copies data out. Each step is checkpointed in the operation's record in the metadata database and is safe to repeat, so a workflow interrupted by a crash resumes on another Worker from its last checkpoint, and repeating a step that was cut short has no extra effect. Workers drive the storage nodes and publish each new partition map to a consensus-backed config store, ZooKeeper / etcd, which the request routers watch, so a change reaches every router within seconds.\n\nScaling is driven by per-partition size and throughput reported by the storage nodes: a partition that grows past ~10 GB or exceeds its throughput share is split, and when nodes are added the Workers move replicas onto them to rebalance. Backups are snapshots written to Blob Storage, and continuously archived write logs there allow point-in-time recovery. Each partition has 3 replicas on different storage nodes, and the config store runs as a quorum, so neither is a single point of failure. Monitoring watches the storage nodes' health, latency, throttling, storage and replication lag, and pages the on-call through the Notification Service when something drifts.",
+  "objectives": ["Control vs data plane", "Desired state & idempotent workflows", "Partition map & splits", "Backups, auth & monitoring"],
+  "specs": {
+    "functional": [
+      "Create, update and delete tables through an authenticated management API with IAM-style policies and API keys",
+      "Record the desired state — tables, schemas, capacity, partitions and operations — in a strongly consistent metadata database",
+      "Run long-running operations (CreateTable CREATING → ACTIVE, partition splits, backups) as idempotent, resumable workflows on Workers",
+      "Publish the partition map to ZooKeeper / etcd; request routers watch it and route reads and writes to the storage nodes",
+      "Split partitions past ~10 GB or their throughput share, rebalance replicas onto new nodes, and snapshot backups to Blob Storage with point-in-time recovery from logs"
+    ],
+    "nonFunctional": [
+      "~100 K tables; ~1 K control-plane operations/min",
+      "Data plane ~10 M requests/s across ~10 K storage nodes, 3 replicas per partition",
+      "Static stability: reads and writes keep working while the control plane is down",
+      "Monitor node health, latency, throttling, storage and replication lag"
+    ],
+    "constraints": [
+      "The data path never depends on the control plane: routers never call the control-plane service",
+      "Routers read the partition map from the config store, never from the metadata database",
+      "Every workflow step is idempotent and checkpointed so an interrupted operation resumes safely"
+    ],
+    "budgetPerHr": 7,
+    "latencyTargetMs": 300,
+    "capacity": [
+      "~1 K operations/min ≈ 17 operations/s for ~100 K tables",
+      "~10 M requests/s ÷ ~10 K storage nodes ≈ 1 K requests/s per node",
+      "Split partitions beyond ~10 GB; 3 replicas per partition"
+    ],
+    "tradeoff": "Keeping the data plane statically stable means routers serve from a cached partition map that can briefly be stale, so storage nodes must reject requests for partitions they no longer own and routers refresh their map. A strongly consistent metadata database and resumable workflows make operations slower to complete but safe to retry after any crash. Splitting partitions early spreads load sooner but means more data movement and more partitions to track.",
+    "bonus": "Connect NoSQL Database → Monitoring for node health and per-table metrics, and Monitoring → Notification Service to page the on-call."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "api-gateway", "label": "Call the management API" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "api-gateway", "toComponentId": "auth-service", "label": "Authenticate and authorise every call" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "api-gateway", "toComponentId": "web-server", "label": "Route to the control-plane service" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Record desired state and operations" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Queue long-running operations" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Run resumable workflows" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "nosql-database", "label": "Provision, split and move partitions" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "zookeeper-etcd", "label": "Publish the partition map" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Write backups" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Send data-plane traffic to the Load Balancer" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "reverse-proxy", "label": "Route to the request routers" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "reverse-proxy", "toComponentId": "zookeeper-etcd", "label": "Watch the partition map" },
+    { "id": "m13", "kind": "connect", "fromComponentId": "reverse-proxy", "toComponentId": "nosql-database", "label": "Read and write on the storage nodes" },
+    { "id": "m14", "kind": "connect", "fromComponentId": "nosql-database", "toComponentId": "monitoring", "label": "Report node health and per-table metrics", "bonus": true },
+    { "id": "m15", "kind": "connect", "fromComponentId": "monitoring", "toComponentId": "notification-service", "label": "Page the on-call", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "reverse-proxy",
+      "toComponentId": "web-server",
+      "message": "The data path must not depend on the control plane."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "reverse-proxy",
+      "toComponentId": "sql-database",
+      "message": "Routers read the partition map from the config store, not the metadata database."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "reverse-proxy",
+      "message": "Run at least two request routers so the data plane survives one failing."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "nosql-database",
+      "message": "Replicate every partition across storage nodes."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "zookeeper-etcd",
+      "message": "Run a quorum for the config store."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "worker",
+      "message": "Connect the operations queue to the workflow Workers."
+    }
+  ],
+  "recommendedComponentIds": ["client", "api-gateway", "auth-service", "web-server", "sql-database", "message-queue", "worker", "nosql-database", "zookeeper-etcd", "blob-storage", "load-balancer", "reverse-proxy", "monitoring", "notification-service"],
+  "hints": [
+    "Build the control plane first: Client → API Gateway → Auth Service and → Web Server, the control-plane service, which records desired state in the SQL Database and queues operations Web Server → Message Queue → Worker.",
+    "Workers drive the storage nodes (Worker → NoSQL Database), publish the partition map (Worker → ZooKeeper / etcd), write backups (Worker → Blob Storage) and checkpoint each workflow step in the SQL Database (Worker → SQL Database). The data plane is separate: Client → Load Balancer → Reverse Proxy, the request routers, which watch ZooKeeper / etcd and read and write NoSQL.",
+    "Run two Reverse Proxies, two NoSQL Database nodes and two ZooKeeper / etcd nodes (a real ensemble uses three or five); each router and the Worker connect to both stores of each kind. Connect each NoSQL node → Monitoring → Notification Service."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-control-plane-for-a-distributed-database",
+  "tips": [
+    "What are the core functionalities of your DB's control plane? E.g, provisioning, configuration management, monitoring, scaling, backups, etc.",
+    "How does your DB manage creating and managing new tables?",
+    "How does your DB handle scaling?",
+    "How does your DB handle authentication?",
+    "How about monitoring and alerts? What is monitored?"
+  ],
+  "resources": [
+    {
+      "title": "What a control plane is (video)",
+      "url": "https://www.youtube.com/watch?v=Ep1QW-wOmgc",
+      "kind": "video"
+    },
+    {
+      "title": "Dynamo paper (Amazon, 2007)",
+      "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf",
+      "kind": "paper"
+    }
+  ]
+}

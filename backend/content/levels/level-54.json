@@ -1,0 +1,118 @@
+{
+  "id": "level-54",
+  "actId": "act-10",
+  "order": 54,
+  "title": "Peer-to-Peer File Transfer (BitTorrent)",
+  "difficulty": "hard",
+  "summary": "Distribute large files peer to peer: hashed pieces and info-hashes, trackers with expiring swarm lists, rarest-first and tit-for-tat, and seed boxes plus a web seed for reliability.",
+  "narrative": "Design a BitTorrent-like system that distributes large files to many users while the users' own machines do most of the uploading. The two Client nodes here are peers — users' machines running a BitTorrent client — and they exchange pieces directly with each other. A popular 4 GB file split into 4 MB pieces has 1,000 pieces, its swarm can reach 10 K+ peers, and each peer re-announces to the tracker about every 30 minutes per torrent, so a 10 K-peer swarm sends only ~6 announces/s.\n\nA file is split into fixed-size pieces of 256 KB–4 MB. Its metainfo lists the hash of every piece — SHA-1 in BitTorrent v1; v2 instead hashes 16 KiB blocks into a SHA-256 Merkle tree per file — and the torrent is identified by its info-hash, a hash of the info section that commits to those piece hashes. The publisher signs the metainfo so peers can check who published it, uploads the file and its metainfo to Blob Storage, and registers the torrent in a ledger in the NoSQL Database: info-hash, piece hashes, size, signature and seeding status. To find who holds a file, peers ask a tracker, the Web Server tier: an announce reports the peer's progress (bytes uploaded, downloaded and left) and returns a random subset of current peers, a scrape returns a swarm's seeder and leecher counts, and the trackers keep each swarm's membership (info-hash → peers) in the Cache with a TTL, so peers that stop re-announcing expire. Peers fetch a torrent's metainfo from the tracker API too, which reads it from the ledger, and they can also find each other through a Kademlia DHT, so a swarm keeps working when the trackers are unreachable. A downloading peer requests the rarest pieces first from several peers at once and practises tit-for-tat: it uploads to the peers that upload to it fastest, plus one optimistically chosen peer so newcomers get started. It verifies every piece's hash before accepting or sharing it — a tampered or corrupt piece is discarded and fetched again, and peers that keep sending bad data are banned — and the download is complete only when every piece hash verifies, after which the peer becomes a seeder.\n\nA file stays available as long as someone seeds it, so the system keeps at least ~3 seeders per torrent. When announces show a torrent below that, the tracker publishes an under-replicated event to a Message Queue; operator-run seed boxes (Workers) pick it up, read the content from Blob Storage and join the swarm like any peer, announcing themselves to the trackers. As a last resort every torrent lists an HTTP web seed: a CDN in front of Blob Storage that serves pieces as Range requests. Scaling is natural — a new machine simply announces and joins the swarm, and trackers and their swarm state are sharded by info-hash so adding a tracker moves only a slice of the swarms. Optionally, Monitoring tracks swarm sizes, seeders per torrent and hash failures.",
+  "objectives": ["Hashed pieces & info-hash", "Trackers, swarms & DHT", "Rarest-first & tit-for-tat", "Seeders & web seeds"],
+  "specs": {
+    "functional": [
+      "Split files into 256 KB–4 MB pieces; the signed metainfo lists every piece hash (SHA-1 in v1, a SHA-256 Merkle tree in v2) and the info-hash identifies the torrent",
+      "Trackers answer announces with current peers from swarm membership kept in the Cache with a TTL; a Kademlia DHT finds peers without a tracker",
+      "Peers exchange pieces directly, rarest first from several peers at once, with tit-for-tat uploads",
+      "Verify every piece's hash before accepting it; discard and re-fetch bad pieces; a download completes when every piece verifies",
+      "Keep ≥ ~3 seeders per torrent: seed boxes seed under-replicated torrents, and a CDN web seed over Blob Storage is the fallback"
+    ],
+    "nonFunctional": [
+      "4 GB file in 4 MB pieces = 1,000 pieces; swarms of 10 K+ peers",
+      "Announces every ~30 min per peer per torrent → ~6 announces/s for a 10 K-peer swarm",
+      "A file stays available when any single machine goes down",
+      "Nobody can modify a file undetected"
+    ],
+    "constraints": [
+      "Peers exchange pieces directly; the trackers only coordinate and never carry file data",
+      "Peers never read the swarm Cache or the metadata ledger directly; they go through the tracker API or the DHT",
+      "Accept a piece only after its hash matches the metainfo"
+    ],
+    "budgetPerHr": 4.5,
+    "latencyTargetMs": 190,
+    "capacity": [
+      "1,000 pieces × 20 B SHA-1 ≈ 20 KB of piece hashes per 4 GB torrent in v1",
+      "10 K peers re-announcing every ~30 min ≈ 6 announces/s per swarm",
+      "≥ ~3 seeders per torrent; trackers sharded by info-hash"
+    ],
+    "tradeoff": "Peers supply most of the bandwidth, so cost barely grows with popularity, but a file is only as available as its seeders, which is why seed boxes and a web seed back it up. Smaller pieces spread sooner and lose less on a bad piece but enlarge the metainfo; larger pieces do the reverse. Trackers make peer discovery simple and observable but are infrastructure to run, while the DHT removes them as a single point at the cost of slower lookups.",
+    "bonus": "Connect Worker → Web Server so seed boxes announce themselves to the trackers, and add Monitoring for swarm sizes, seeders and hash failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "client", "label": "Let peers exchange pieces directly" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Reach the trackers through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Serve tracker announce and scrape" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Keep swarm membership with a TTL" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Store torrent metadata and piece hashes" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Fall back to the web seed with Range requests" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Serve the web seed from Blob Storage" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish under-replicated torrent events" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch torrents to seed boxes" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Read the content to seed" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "web-server", "label": "Announce seed boxes to the trackers", "bonus": true },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for swarms and seeders", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Peers get torrent metadata through the tracker API, never directly from the NoSQL Database."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "cache",
+      "message": "Peers learn swarm membership through the trackers, never directly from the Cache."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run several trackers so peers can still find each other when one fails."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two seed boxes so under-replicated torrents keep a seeder when one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "blob-storage",
+      "companionComponentId": "cdn",
+      "message": "Serve the web seed from Blob Storage through a CDN."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "cache", "nosql-database", "cdn", "blob-storage", "message-queue", "worker", "monitoring"],
+  "hints": [
+    "Add two Client nodes, Peer A and Peer B, and connect them to each other in both directions. Each peer reaches the trackers through Client → Load Balancer → Web Server, which keeps swarm membership in a Cache and torrent metadata in a NoSQL Database.",
+    "Give every torrent a web seed: Client → CDN → Blob Storage. For under-replicated torrents, wire Web Server → Message Queue → Worker, the seed box, and Worker → Blob Storage to read the content it seeds.",
+    "Run two Web Servers, each connected to the Cache, NoSQL, the Message Queue and Monitoring. The queue feeds two Workers, and each Worker reads Blob Storage and announces to both Web Servers."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/create-a-distributed-file-transfer-system-like-bittorrent",
+  "tips": [
+    "How will you ensure that a file is hosted on the system reliably, even if one machine goes down?",
+    "If a user wants to download a file, how do you locate the machine that holds it?",
+    "You probably need some sort of ledger or metadata table, how will you store that?",
+    "How will you make sure that a download is completed?",
+    "When a machine is added, how do you scale the cluster?",
+    "How do you secure the files and ensure no one modifies them?"
+  ],
+  "resources": [
+    {
+      "title": "Great paper on this topic",
+      "url": "https://web.cs.ucla.edu/classes/cs217/05BitTorrent.pdf",
+      "kind": "paper"
+    },
+    {
+      "title": "Article on this",
+      "url": "https://medium.com/@abhinavcv007/bittorrent-part-1-the-engineering-behind-the-bittorrent-protocol-04e70ee01d58",
+      "kind": "article"
+    },
+    {
+      "title": "High Level Video Explanation",
+      "url": "https://www.youtube.com/watch?v=6PWUCFmOQwQ",
+      "kind": "video"
+    }
+  ]
+}

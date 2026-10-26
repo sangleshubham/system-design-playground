@@ -52,5 +52,11 @@
     "order": 9,
     "title": "Batch & Coordination",
     "description": "Sort, rank, schedule and move data in bulk across fleets of machines."
+  },
+  {
+    "id": "act-10",
+    "order": 10,
+    "title": "Running Distributed Systems",
+    "description": "Downloads, peer-to-peer transfer, health checks, tracing and the control plane that runs a database."
   }
 ]

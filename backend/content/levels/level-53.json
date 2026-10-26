@@ -1,0 +1,96 @@
+{
+  "id": "level-53",
+  "actId": "act-10",
+  "order": 53,
+  "title": "File Downloader",
+  "difficulty": "hard",
+  "summary": "Build a download library and its backend: signed URLs, ranged and resumable chunk downloads from a CDN, hash verification and per-user quotas.",
+  "narrative": "Design a file downloader: a client library that apps embed, plus the backend it talks to. The Client here is the app running the library on a user's device. Files range from a few KB to tens of GB, so the library must show progress, pause and resume, survive flaky networks and switches between Wi-Fi and mobile data, and verify that the file it saved is exactly the one published. Plan for ~10 M downloads/day averaging ~200 MB ≈ 2 PB/day ≈ 185 Gbps of egress. Popularity is skewed: the top 5 % of files account for ~80 % of bytes, so the CDN should serve over 90 % of bytes from its edge caches, leaving under ~20 Gbps for the origin.\n\nThe API is small. GET /files/{id} returns the file's metadata — size, SHA-256 hash and chunk size — plus a short-lived signed download URL. The library splits the file into fixed-size chunks (e.g. 8 MB, so a 10 GB file is ~1,280 chunks) and fetches each one with an HTTP Range request such as Range: bytes=0-8388607, which the server answers with 206 Partial Content; a few chunks download in parallel over separate connections. The library persists on the device which chunks are complete, so a pause, a crash or a network switch resumes from the last completed chunk instead of starting over. A failed chunk is retried with exponential backoff and jitter, and when the signed URL expires mid-download the library asks the API for a fresh one and carries on. When every chunk is written, the library computes the file's SHA-256 and compares it with the hash from the metadata; a mismatch means the file is discarded or re-downloaded, never handed to the app.\n\nOn the backend, a Load Balancer spreads metadata requests over stateless Web Servers. They authorise each request through the Auth Service, read file metadata — size, hash, chunk size and access control list — from the SQL Database through a Cache, because hot files are requested millions of times, and sign a URL that the CDN accepts until it expires. The API servers never stream file bytes: the bytes come from the CDN, whose edges cache popular files and serve Range requests from cache, fetching misses from Blob Storage, the origin that holds every file. This keeps 185 Gbps of traffic off the API tier and close to users. Optionally, a Rate Limiter enforces per-user download quotas against abuse, and Monitoring tracks API errors, CDN hit ratio and failed downloads.",
+  "objectives": ["Metadata & signed URLs", "Ranged, resumable chunks", "Hash verification", "CDN caching for hot files"],
+  "specs": {
+    "functional": [
+      "GET /files/{id} returns size, SHA-256, chunk size and a short-lived signed download URL after authorising the user",
+      "Download fixed-size chunks with HTTP Range requests (206 Partial Content) over a few parallel connections",
+      "Persist completed chunks on the device so pause, crash or a network switch resumes from the last completed chunk",
+      "Retry failed chunks with exponential backoff and jitter, and refresh the signed URL when it expires",
+      "Verify the final SHA-256 against the metadata before handing the file to the app"
+    ],
+    "nonFunctional": [
+      "Files from a few KB to tens of GB; progress, pause and resume on flaky networks",
+      "~10 M downloads/day averaging ~200 MB ≈ 2 PB/day ≈ 185 Gbps of egress",
+      "Top 5 % of files ≈ 80 % of bytes; CDN hit ratio above 90 %",
+      "Survive a Web Server failure without failing downloads"
+    ],
+    "constraints": [
+      "API servers never stream file bytes: they return metadata and signed URLs, and the CDN serves the bytes",
+      "Serve every file through the CDN with Blob Storage as its origin",
+      "Signed URLs are short-lived; the library asks the API for a fresh one when a URL expires"
+    ],
+    "budgetPerHr": 4,
+    "latencyTargetMs": 90,
+    "capacity": [
+      "~10 M downloads/day × ~200 MB ≈ 2 PB/day ≈ 185 Gbps",
+      "> 90 % CDN hit ratio → under ~20 Gbps from the origin",
+      "8 MB chunks: a 10 GB file ≈ 1,280 Range requests"
+    ],
+    "tradeoff": "Small chunks make resume and retry cheap but add per-request overhead; large chunks are efficient but lose more work on each failure. More parallel connections speed up a single download on high-latency links but load the CDN and compete with other traffic. Short-lived signed URLs limit link sharing at the cost of refresh round trips during long downloads.",
+    "bonus": "Connect Web Server → Rate Limiter for per-user download quotas, and add Monitoring for API errors, CDN hit ratio and failed downloads."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Request file metadata through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Serve the metadata and signed-URL API" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "auth-service", "label": "Authorise the request and sign the URL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store file size, hash, chunk size and ACL" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache hot file metadata" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Download chunks with Range requests" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Fetch cache misses from the origin" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "rate-limiter", "label": "Enforce per-user download quotas", "bonus": true },
+    { "id": "m9", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for errors and hit ratio", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "blob-storage",
+      "message": "Don't stream file bytes through the API servers — hand out signed URLs and let the CDN serve range requests."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so downloads can start and refresh URLs when one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "blob-storage",
+      "companionComponentId": "cdn",
+      "message": "Put a CDN in front of Blob Storage so edges cache popular files and serve range requests."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "auth-service", "sql-database", "cache", "cdn", "blob-storage", "rate-limiter", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server for GET /files/{id}. The Web Server checks access with the Auth Service and reads size, hash and chunk size from the SQL Database.",
+    "Put a Cache beside SQL for hot metadata. The bytes never pass through the Web Server: connect Client → CDN for Range requests and CDN → Blob Storage as the origin.",
+    "Run two Web Servers, each connected to the Auth Service, SQL, the Cache, a Rate Limiter for per-user quotas and Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-file-downloader-library",
+  "tips": [
+    "Backend: what does the API look like?",
+    "How do you do this at scale?",
+    "How can you support large files?",
+    "How can you utilize cache for popular files?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/1587255/Facebook-System-Design",
+      "kind": "discussion"
+    },
+    {
+      "title": "Video Solution",
+      "url": "https://www.youtube.com/watch?v=u520bdagKkU",
+      "kind": "video"
+    }
+  ]
+}
