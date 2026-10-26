@@ -1,0 +1,111 @@
+{
+  "id": "level-27",
+  "actId": "act-5",
+  "order": 27,
+  "title": "Wiki & Document Versioning",
+  "difficulty": "easy",
+  "summary": "Keep stable document URLs and immutable revision history while storing snapshots and diffs efficiently.",
+  "narrative": "Build a Wikipedia/Notion-style document system without real-time co-editing. A page has a stable URL, /wiki/{slug}, mapped to an immutable page id; preserve old slug aliases on rename so existing links keep working. Every save creates a revision recording its author, timestamp, parent revision and message. Readers can view or diff any revision and restore one with a click: restore writes a new revision with the old content instead of deleting history.\n\nExpect ~50 M pages and ~1 B revisions, with ~6 edits/s against ~10 K reads/s. Keep page/slug mappings and revision metadata in SQL; store content in Blob Storage with content-hash deduplication. Write a full snapshot every 20 revisions and diffs between them, bounding reconstruction to one snapshot plus at most 19 diffs. At ~20 KB/page and ~1 KB/diff, ~1 B × 1 KB of diffs plus ~50 M × 20 KB of snapshots is roughly 2 TB before deduplication, rather than ~20 TB of full copies; this is an estimate for one snapshot generation, with page-history distribution affecting the actual total.\n\nClients reach redundant Web Servers through a CDN and Load Balancer. Cache the current rendered page and use the CDN for logged-out readers; authenticated/private responses must bypass shared caching. On edit, invalidate the rendered version and purge public CDN entries, then publish an edit event to a Message Queue. A Worker reads revision metadata, compacts diff chains into new snapshots in Blob Storage and invalidates Cache; publish a new snapshot pointer only after the blob is durable. Optionally update a Search Index over current versions and add Monitoring for reconstruction errors and stale pages.",
+  "objectives": ["Stable page identities", "Immutable revision history", "Snapshots plus bounded diffs", "Rendered-page cache invalidation"],
+  "specs": {
+    "functional": [
+      "Create pages with stable ids and slug URLs; retain old slug aliases when a page is renamed",
+      "Record author, timestamp, parent revision and message on each save; view and diff any revision",
+      "Restore content by writing a new revision without erasing later history",
+      "Store revision metadata in SQL and content-hash-deduplicated snapshots/diffs in Blob Storage",
+      "Cache current rendered pages, purge on edits, and compact diff chains asynchronously"
+    ],
+    "nonFunctional": [
+      "Serve ~10 K reads/s with ~6 edits/s over ~50 M pages and ~1 B revisions",
+      "Survive one Web Server failure",
+      "Bound version reconstruction to one snapshot plus ≤19 diffs with a snapshot every 20 revisions"
+    ],
+    "constraints": [
+      "Clients must not access SQL directly; every Client path to Blob Storage must pass through a Web Server",
+      "No real-time co-editing; reject or resolve stale saves using the parent revision rather than silently overwriting concurrent edits",
+      "Restore is non-destructive; keep prior revision metadata and content reachable",
+      "Connect Blob Storage to a Worker for compaction; expose only public logged-out pages through shared CDN caches"
+    ],
+    "budgetPerHr": 5.0,
+    "latencyTargetMs": 180,
+    "capacity": [
+      "~50 M pages; ~1 B revisions; ~6 edits/s and ~10 K reads/s",
+      "Average page ~20 KB, average diff ~1 KB; snapshot every 20 revisions",
+      "~1 B × 1 KB + ~50 M × 20 KB ≈ 2 TB per snapshot-generation estimate, versus ~20 TB of full copies before deduplication"
+    ],
+    "tradeoff": "Full snapshots make reads simple but waste storage; diffs save space at the cost of reconstruction work. A snapshot every 20 revisions bounds that work, while compaction and content hashes reduce redundant storage without changing revision identity.",
+    "bonus": "Connect the Worker to a Search Index for full-text search over current versions and add Monitoring for compaction and cache freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Serve public rendered pages through the CDN" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "load-balancer", "label": "Route uncached page requests to the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance document requests across Web Servers" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store page identities and revision metadata in SQL" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Store snapshots and diffs in Blob Storage" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache the current rendered version" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish edit events for background work" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch compaction and invalidation to a Worker" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Write compacted revision snapshots" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Index current document versions", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for compaction and stale pages", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients access document metadata through Web Servers, never directly from SQL."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "blob-storage",
+      "message": "Document content must pass through the Web Server for access checks and revision reconstruction."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so document reads and saves survive one failure."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "blob-storage",
+      "companionComponentId": "worker",
+      "message": "Connect Blob Storage to a Worker that compacts diff chains into snapshots."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "load-balancer", "web-server", "sql-database", "blob-storage", "cache", "message-queue", "worker", "search-index", "monitoring"],
+  "hints": [
+    "Start with Client → CDN → Load Balancer → Web Server. Connect the app to SQL for page ids, slug aliases and revisions, and to Blob Storage for snapshots and diffs; the CDN caches rendered public pages, not a direct blob origin.",
+    "Connect Web Server → Cache for the current rendering and → Message Queue → Worker for edit events. The Worker reads SQL, writes Blob Storage snapshots and invalidates Cache; purge public CDN entries on edits.",
+    "Run two Web Servers, each connected to SQL, Blob Storage, Cache and Message Queue. Connect Worker → SQL, Blob Storage and Cache to compact chains to at most 19 diffs. Add Worker → Search Index and Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/create-a-document-management-system-like-wikipedia-or-notion",
+  "tips": [
+    "Note: this question is without real-time editing.",
+    "How will you store each document? What will the URLs look like?",
+    "How will you do versioning? This is like Git for documents.",
+    "How will you restore or view any version with one click?",
+    "How will you minimize the storage used between versions, aka, how will you store diffs?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/322448/Content-Management-System-Design",
+      "kind": "discussion"
+    },
+    {
+      "title": "Solution from Google Engineer (also covers live editing, which this question does not need)",
+      "url": "https://www.youtube.com/watch?v=YCjVIDv0zQY",
+      "kind": "video"
+    },
+    {
+      "title": "Detailed Frontend Design",
+      "url": "https://www.youtube.com/watch?v=tsGarhpWOws",
+      "kind": "video"
+    }
+  ]
+}

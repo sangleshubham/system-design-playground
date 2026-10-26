@@ -1,0 +1,94 @@
+{
+  "id": "level-26",
+  "actId": "act-5",
+  "order": 26,
+  "title": "PC Parts Compatibility",
+  "difficulty": "easy",
+  "summary": "Guide PC builders toward compatible parts using catalog attributes, category rules and explicit vendor exceptions.",
+  "narrative": "Design a service for the assemble-a-PC section of the Newegg website, where customers pick the different parts of a PC and learn whether those parts are compatible. Keep track of compatibility across selections, explain conflicts, and filter the next category to compatible candidates. This is primarily a frontend and database design problem; auto parts fitment is a related application.\n\nStore ~500 K parts across ~12 categories in SQL, with attributes including CPU socket, RAM type, form factor, TDP and PSU wattage. Use a small rules table per category pair: motherboard.socket = cpu.socket, total TDP × 1.5 ≤ psu.watts, and the case must support the board form factor. Avoid an N² pair matrix; keep explicit known-incompatible and verified-compatible vendor pairs in an exceptions table. Saved builds are SQL rows keyed by build id, exposed through shareable URLs.\n\nAbout 2 M builder sessions/day × ~20 picks produce ~40 M filter queries/day, or ~460/s with ~2 K/s peaks. Route clients through a Load Balancer to redundant Web Servers. Filter candidates using Search Index attributes, cache candidate lists and validation results per selection, and validate the entire build server-side on every change and at checkout. Catalog and rule changes are only thousands/day: publish admin change events to a Message Queue, then let a Worker read SQL, re-index affected parts and invalidate Cache. Optionally serve product images and the builder UI through a CDN and monitor index freshness.",
+  "objectives": ["Attribute-based compatibility", "Vendor exceptions", "Interactive candidate filters", "Catalog index freshness"],
+  "specs": {
+    "functional": [
+      "Filter the next part category as selections change and explain incompatible combinations",
+      "Store parts, category attributes, category-pair rules, vendor exceptions and saved builds in SQL",
+      "Use Search Index attribute filters and cache compatible candidates and validation results per selection",
+      "Validate the full build server-side on every change and checkout; apply vendor exceptions explicitly",
+      "Publish catalog/rule changes from the admin API; have a Worker read SQL, re-index parts and invalidate affected cache entries"
+    ],
+    "nonFunctional": [
+      "Serve ~460 filter queries/s on average and ~2 K/s at peak",
+      "Keep the builder available after one Web Server failure",
+      "Precompute common compatibility checks and tolerate briefly stale suggestions while validating against current rules at checkout"
+    ],
+    "constraints": [
+      "Clients must not access SQL directly; Search Index access must pass through Web Servers",
+      "Use category-pair attribute rules plus explicit exceptions instead of an N² compatibility matrix",
+      "Keep Search Index connected to a Worker that applies catalog changes",
+      "Check CPU socket and RAM type, total TDP × 1.5 ≤ PSU watts, and case/board form factor"
+    ],
+    "budgetPerHr": 5.0,
+    "latencyTargetMs": 150,
+    "capacity": [
+      "~500 K parts across ~12 categories",
+      "2 M sessions/day × ~20 picks ≈ 40 M filter queries/day ≈ 460/s; ~2 K/s peak",
+      "Catalog updates: thousands/day, far below filter traffic"
+    ],
+    "tradeoff": "Attribute rules avoid a quadratic compatibility matrix and support fast search filters, but vendor-specific exceptions still need explicit records. Asynchronous indexing and caching improve browsing speed at the cost of stale suggestions; authoritative server validation catches conflicts before checkout.",
+    "bonus": "Connect Client → CDN for product images and the builder UI, and add Monitoring for stale indexes and invalidation failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route builder requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance builder requests across Web Servers" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store catalog rules and saved builds in SQL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Filter compatible candidates by attributes" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache candidates and validation results" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish catalog and rule changes" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch catalog changes to a Worker" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Re-index affected parts" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "cache", "label": "Invalidate affected compatibility entries" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Serve product images and the builder UI through the CDN", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for catalog and index freshness", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients access parts and saved builds through the Web Server, never directly from SQL."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "search-index",
+      "message": "Candidate searches must pass through the Web Server for selection validation."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so a failure does not interrupt the builder."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "search-index",
+      "companionComponentId": "worker",
+      "message": "The index must be kept in sync with the catalog by a Worker."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "cdn", "sql-database", "search-index", "cache", "message-queue", "worker", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server → SQL Database. Model part attributes, category-pair rules, explicit exceptions and saved builds; validate each complete selection on the server.",
+    "Connect Web Server → Search Index for attribute-filtered candidates and → Cache for reusable candidate lists. Send admin changes through Web Server → Message Queue → Worker; connect the Worker to SQL, Search Index and Cache.",
+    "Run two Web Servers, each connected to SQL, Search Index, Cache and Message Queue. The Worker reads SQL, updates Search Index and invalidates Cache. Add Client → CDN for images/UI and Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-parts-compatibility-feature-for-ecommerce-site",
+  "tips": [
+    "Auto parts compatibility is another way to describe this problem.",
+    "Presumably, you might have a compatibility list for each part provided. Narrow down the problem to a particular type of part.",
+    "This problem is more about frontend and DB design than about distributed systems.",
+    "Keep track of each part's compatibility with other parts, so the customer is told when two parts they picked are not compatible."
+  ],
+  "resources": []
+}

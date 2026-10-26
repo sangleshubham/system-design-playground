@@ -1,0 +1,132 @@
+{
+  "id": "level-30",
+  "actId": "act-5",
+  "order": 30,
+  "title": "Login & Authentication",
+  "difficulty": "medium",
+  "summary": "Authenticate email and password logins with slow password hashes, revocable sessions and asynchronous password recovery.",
+  "narrative": "Build sign-up, login and logout with email and password, persistent sessions across page loads, and a forgot-password flow. Use TLS for every connection. Web Servers call an Auth Service; only that service touches credentials in SQL, storing email, MFA settings and per-user salted, deliberately slow Argon2id or bcrypt hashes. Never store or log plaintext passwords. Verify by re-hashing with the stored salt and parameters using the password library, then comparing in constant time. Unknown emails and wrong passwords receive the same generic error; use comparable hash work to reduce timing-based account enumeration.\n\nFor ~50 M users, expect ~5 M logins/day ≈ 60/s with ~600/s peaks. Password hashing deliberately consumes ~50–100 ms of CPU per attempt, while session validation happens on every authenticated request, ~50 K/s, and needs a ~1 ms cache lookup. After login, issue a random high-entropy opaque session id in an HttpOnly; Secure; SameSite cookie. Store session state in Cache with a TTL and validate it on every request; deletion or revocation takes effect immediately rather than waiting for a token to expire. Rotate the session id on login and enforce appropriate CSRF protections for cookie-authenticated writes.\n\nUse redundant Web Servers behind a Load Balancer and redundant Auth Services, each connected to SQL and Cache. Web Servers consult a Rate Limiter per IP and account, with backoff or temporary lockout for repeated login attempts; MFA is a natural extension. For password recovery, generate a random single-use reset token lasting 15–30 minutes, store only its hash in SQL and respond identically whether the email exists. Enqueue reset and verification emails for a Worker to send through the Notification Service. Atomically consume the reset token and update the password, then revoke existing sessions. Optional OAuth/OIDC social login calls an external identity provider through the Third-Party API; Monitoring tracks failures without logging credentials or tokens.",
+  "objectives": ["Slow salted password hashes", "Revocable TTL sessions", "Single-use password recovery", "Login abuse protection"],
+  "specs": {
+    "functional": [
+      "Support email/password sign-up, login and logout through an Auth Service",
+      "Store email, password hash and salt, MFA settings and reset-token hashes in SQL; verify passwords with a constant-time library comparison",
+      "Issue high-entropy opaque session ids in HttpOnly; Secure; SameSite cookies and validate server-side TTL session state in Cache",
+      "Generate single-use 15–30 minute reset tokens, store only hashes, send links asynchronously and revoke existing sessions after reset",
+      "Rate-limit attempts per IP and account with backoff or temporary lockout; return generic login and recovery responses"
+    ],
+    "nonFunctional": [
+      "Handle ~60 logins/s on average, ~600/s peak and ~50 K session checks/s",
+      "Target ~1 ms session-store lookups while spending ~50–100 ms CPU deliberately on password verification",
+      "Survive one Web Server or Auth Service failure; make logout and revocation visible on subsequent session checks"
+    ],
+    "constraints": [
+      "Only the Auth Service touches the credentials table; forbid Web Server → SQL and Client → SQL",
+      "Password-reset and verification emails must pass through Message Queue before Notification Service",
+      "Connect Auth Services to Cache for revocable session state; enforce TLS throughout",
+      "Never store or log plaintext passwords; persist only reset-token hashes in SQL, keep raw tokens out of logs, consume tokens atomically and apply CSRF protections to cookie-authenticated writes"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 270,
+    "capacity": [
+      "~50 M users; ~5 M logins/day ≈ 60/s; ~600/s peak",
+      "~50 K authenticated requests/s → ~50 K session checks/s at ~1 ms per cache lookup",
+      "Password hashing ~50–100 ms CPU/attempt → ~30–60 CPU-seconds/s at 600 attempts/s; reset expiry 15–30 minutes"
+    ],
+    "tradeoff": "Opaque sessions require a fast state lookup on each request but give immediate logout and revocation. A short-lived signed access token plus refresh-token state can reduce lookups, but access tokens remain valid until expiry unless checked against revocation state. Slow password hashing raises attack cost and also requires capacity planning and rate limits.",
+    "bonus": "Connect Auth Services to the Third-Party API for OAuth/OIDC social login and add Monitoring for authentication and recovery failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route authentication requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance login requests across Web Servers" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "auth-service", "label": "Delegate credential verification to Auth Service" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "rate-limiter", "label": "Throttle attempts per IP and account" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "auth-service", "toComponentId": "sql-database", "label": "Store users and salted password hashes in SQL" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "auth-service", "toComponentId": "cache", "label": "Store revocable sessions with TTL in Cache" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "auth-service", "toComponentId": "message-queue", "label": "Enqueue reset and verification emails" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch email jobs to a Worker" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Send recovery emails through Notification Service" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "auth-service", "toComponentId": "external-api", "label": "Add OAuth or OIDC social login", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for authentication and recovery failures", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "sql-database",
+      "message": "Only the Auth Service touches the credentials table"
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients must never access user credentials or reset tokens directly in SQL."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "auth-service",
+      "toComponentId": "notification-service",
+      "message": "Send emails asynchronously, never inside the login/reset request"
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so one failure does not stop login requests."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "auth-service",
+      "message": "If auth is down, nobody can log in — run at least two Auth Services."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "auth-service",
+      "companionComponentId": "cache",
+      "message": "Connect Auth Services to Cache for TTL sessions and immediate revocation."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "auth-service", "rate-limiter", "sql-database", "cache", "message-queue", "external-api", "monitoring", "worker", "notification-service"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server → Auth Service. Connect Web Server → Rate Limiter and Auth Service → SQL for salted password hashes; do not connect Web Server directly to SQL.",
+    "Connect Auth Service → Cache for TTL sessions and → Message Queue → Worker → Notification Service for asynchronous reset emails. Keep only reset-token hashes in SQL, consume tokens once and revoke sessions after a reset.",
+    "Run two Web Servers and two Auth Services. Each Web Server reaches both Auth Services and Rate Limiter; each Auth Service reaches SQL, Cache and Message Queue. Retain the Worker email path, then add Auth Service → Third-Party API for social login and → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-user-login-and-authentication-system",
+  "tips": [
+    "What methods do you use to authenticate?",
+    "How do you verify a user's credentials in the backend?",
+    "How do you maintain an authenticated session?",
+    "How do you store passwords in a database?",
+    "How do you handle error flows - like forgotten passwords?"
+  ],
+  "resources": [
+    {
+      "title": "Great explanation",
+      "url": "https://www.youtube.com/watch?v=uj_4vxm9u90",
+      "kind": "video"
+    },
+    {
+      "title": "Good solution",
+      "url": "https://hackernoon.com/designing-functional-authentication-and-authorization-systems",
+      "kind": "article"
+    },
+    {
+      "title": "Good summary",
+      "url": "https://www.finalroundai.com/interview-questions/google-design-login-endpoint",
+      "kind": "article"
+    },
+    {
+      "title": "Explanation video (1)",
+      "url": "https://www.youtube.com/watch?v=fyTxwIa-1U0",
+      "kind": "video"
+    },
+    {
+      "title": "Explanation video (2)",
+      "url": "https://www.youtube.com/watch?v=zt8Cocdy15c",
+      "kind": "video"
+    }
+  ]
+}

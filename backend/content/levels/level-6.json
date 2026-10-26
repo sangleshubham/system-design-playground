@@ -4,30 +4,39 @@
   "order": 7,
   "title": "Notification System",
   "difficulty": "medium",
-  "summary": "Fan out push, SMS, and email through a queue and a pool of workers — without blocking the request that triggered them.",
-  "narrative": "A single user action can now spray thousands of notifications: a creator posts and every follower needs a push, an SMS, or an email. If you try to send all of that inline, the triggering request hangs for seconds and one flaky provider takes the whole endpoint down with it.\n\nThe pattern is asynchronous decoupling. The web tier does almost nothing: it validates the request and drops a job onto a message queue, then returns immediately. A pool of workers pulls jobs off the queue at its own pace and hands each one to a notification service that talks to the push, SMS, and email providers. Because the queue absorbs bursts and the workers scale independently, a spike in sends never touches request latency. And because deliveries fail — providers time out, numbers are invalid — you attach a dead letter queue: after a message exhausts its retries, the broker parks it there instead of dropping it, so failures can be inspected and replayed rather than silently lost.\n\nWire the pipeline end to end: client to the API gateway to the web tier, the web tier enqueues onto the message queue, workers drain the queue into the notification service, and poison messages spill into the dead letter queue. Run more than one worker so a single crash can't stall delivery.",
-  "objectives": ["Async decoupling via a queue", "Worker fan-out", "Reliable delivery", "Dead-letter handling of failures"],
+  "summary": "Fan out immediate, scheduled and bulk push, SMS and email through queued workers with preferences, delivery tracking and controlled retries.",
+  "narrative": "A single user action can spray thousands of notifications: a creator posts and every follower needs a push, SMS or email. The Client here represents product services calling the notification API; scheduled sends and bulk campaigns are additional sources. Keep all channels behind Notification Service, which talks to APNs/FCM for mobile push and to SMS and email providers. Store user contact info, device tokens, preferences, opt-outs and templates in SQL; validate recipient eligibility and select channels before enqueuing, with a final preference/opt-out check at dispatch for delayed sends.\n\nExpect ~10 M notifications/day steady, or ~115/s, plus campaigns of 50 M recipients that must go out within one hour: ~14 K/s, roughly 100× steady traffic. The web tier validates requests, reads SQL and enqueues work, then returns without waiting for delivery. For send-later or bulk campaigns it registers work with Task Scheduler, which fans recipient batches into Message Queue. The queue absorbs bursts while Workers scale independently; provision sustained provider capacity for the one-hour campaign goal because buffering alone cannot meet that deadline.\n\nWire Client → API Gateway → redundant Web Servers, each connected to Message Queue, SQL and Task Scheduler; the scheduler also enqueues into the queue. Run redundant Workers to drain jobs into Notification Service. Track attempts and status in a NoSQL delivery log keyed by an idempotency key; claim work conditionally and reuse that key at providers that support idempotency. Retries must not double-send: if a provider does not support deduplication, reconcile uncertain outcomes before retrying rather than claiming exactly-once delivery across a network timeout. Retry transient failures with exponential backoff and jitter, then park exhausted jobs in a Dead Letter Queue for inspection and controlled replay. Distinguish provider acceptance from confirmed delivery via available receipts and keep status queryable. Optionally connect Workers to Rate Limiter for per-provider quotas and add Monitoring for queue age, delivery success and DLQ growth.",
+  "objectives": ["Immediate, scheduled & bulk sources", "Channel preferences & opt-outs", "Idempotent delivery tracking", "Retries & dead-letter handling"],
   "specs": {
     "functional": [
-      "Accept a notification request and return before anything is delivered",
-      "Enqueue delivery jobs onto a message queue",
-      "Have workers pull jobs and dispatch push/SMS/email via the notification service",
-      "Capture messages that fail after retries in a dead letter queue"
+      "Accept immediate notification requests from product services and return before delivery",
+      "Store user contact info, device tokens, preferences, opt-outs and templates in SQL; resolve channels and recheck delayed-send eligibility at dispatch",
+      "Register send-later and bulk campaigns with Task Scheduler; enqueue recipient batches into Message Queue",
+      "Have Workers dispatch APNs/FCM push, SMS and email through Notification Service",
+      "Use a NoSQL delivery log keyed by idempotency key for conditional work claims, attempts and queryable status; preserve provider deduplication keys across retries",
+      "Retry transient failures with exponential backoff and jitter, then park exhausted jobs in a Dead Letter Queue"
     ],
     "nonFunctional": [
-      "A burst of sends must not increase request latency",
-      "A slow or failing provider must not block the request path",
-      "A single worker crash must not stall the pipeline"
+      "A slow or failing provider must not block the triggering request; buffer bulk work and scale Workers independently",
+      "A single Worker crash must not stall the pipeline",
+      "Support ~10 M notifications/day steady and a 50 M recipient campaign within one hour when provider capacity permits",
+      "Distinguish accepted from delivered status; use delivery receipts when available and reconcile ambiguous provider outcomes before retries"
     ],
     "constraints": [
-      "Requests enter through the API gateway",
-      "Notifications are never sent synchronously from the request path"
+      "Requests enter through the API Gateway; never send notifications synchronously from the web request path",
+      "Connect Task Scheduler to Message Queue for send-later and bulk batches",
+      "Keep delivery-log point lookups and conditional writes in NoSQL",
+      "Prevent retry double-sends with stable idempotency keys and provider deduplication or uncertain-outcome reconciliation; a delivery log alone cannot guarantee exactly-once external delivery"
     ],
     "budgetPerHr": 6.0,
     "latencyTargetMs": 350,
-    "capacity": ["~5,000 enqueued jobs/sec at peak fan-out", "Millions of notifications delivered per day"],
-    "tradeoff": "A queue-and-worker pipeline trades immediate, in-line delivery for resilience and scale — you accept eventual delivery in exchange for bursts that never hurt latency and failures you can replay.",
-    "bonus": "Add Monitoring to watch queue depth and delivery success rate."
+    "capacity": [
+      "~10 M notifications/day / 86,400 s ≈ 115/s steady",
+      "50 M campaign recipients / 3,600 s ≈ 14 K/s within one hour",
+      "Bulk throughput is roughly 100× steady traffic; fan out recipient batches through the queue and provision matching provider capacity"
+    ],
+    "tradeoff": "A queue-and-worker pipeline trades immediate inline delivery for eventual delivery, independent scaling and recoverable retries. Batching bounds campaign fan-out work, while idempotency and delivery receipts improve reliability; an ambiguous provider timeout still needs provider deduplication or reconciliation before a safe resend.",
+    "bonus": "Add Monitoring for queue depth, oldest-job age, delivery success and DLQ growth; connect Workers to Rate Limiter to respect per-provider quotas."
   },
   "missions": [
     { "id": "m1", "kind": "add", "componentId": "message-queue", "label": "Add a Message Queue to decouple accept from deliver" },
@@ -37,7 +46,12 @@
     { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let Workers pull jobs off the queue" },
     { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Deliver via push/SMS/email" },
     { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park messages that exhaust their retries" },
-    { "id": "m8", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for queue depth and delivery rate", "bonus": true }
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Load contacts tokens preferences and templates from SQL" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "nosql-database", "label": "Track idempotent delivery status in NoSQL" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Register campaigns and send-later jobs" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "message-queue", "label": "Enqueue scheduled recipient batches" },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for queue depth and delivery rate", "bonus": true },
+    { "id": "m13", "kind": "connect", "fromComponentId": "worker", "toComponentId": "rate-limiter", "label": "Respect per-provider delivery quotas", "bonus": true }
   ],
   "topologyRules": [
     {
@@ -65,12 +79,49 @@
       "componentId": "message-queue",
       "companionComponentId": "dead-letter-queue",
       "message": "A Message Queue needs a Dead Letter Queue so messages that fail after retries are parked, not dropped."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "message-queue",
+      "message": "Connect Task Scheduler to Message Queue so scheduled campaigns enter the delivery pipeline."
     }
   ],
-  "recommendedComponentIds": ["client", "api-gateway", "web-server", "message-queue", "worker", "notification-service", "dead-letter-queue", "monitoring"],
+  "recommendedComponentIds": ["client", "api-gateway", "web-server", "message-queue", "sql-database", "task-scheduler", "monitoring", "worker", "dead-letter-queue", "notification-service", "nosql-database", "rate-limiter"],
   "hints": [
-    "The web tier should do almost nothing: validate the request, drop a job on the Message Queue, and return. Wire Client → API Gateway → Web Server → Message Queue.",
-    "Workers pull jobs off the queue and hand them to the Notification Service for push/SMS/email. Run at least two Workers so a single crash doesn't halt delivery.",
-    "Connect the Message Queue to a Dead Letter Queue so poison messages are parked for inspection instead of lost, and add Monitoring to watch queue depth and success rate."
+    "The web tier validates requests, loads contacts, tokens, preferences and templates from SQL, enqueues work and returns. Start with Client → API Gateway → Web Server → Message Queue and Web Server → SQL.",
+    "Wire Message Queue → Worker → Notification Service for APNs/FCM, SMS and email, and Worker → NoSQL for idempotent delivery status. Connect Web Server → Task Scheduler → Message Queue for send-later and bulk batches; retry transient failures with backoff before Message Queue → Dead Letter Queue.",
+    "Use two Web Servers, each connected to SQL, Message Queue and Task Scheduler, and two Workers fed by the queue. Each Worker reaches Notification Service and NoSQL; the scheduler enqueues recipient batches and the queue reaches the DLQ. Add each Web Server → Monitoring and each Worker → Rate Limiter for provider quotas."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-notification-service-at-scale",
+  "tips": [
+    "What channels to support?",
+    "How to capture notifications - what are the sources?",
+    "Where to store them temporarily while they are being processed - Queue? Kafka?",
+    "How to deliver the notifications to channels - Mobile push? Email?",
+    "Scalability - how does it scale, specially if there is a bulk notification request?",
+    "How do you ensure that a notification is delivered?"
+  ],
+  "resources": [
+    {
+      "title": "High level overview",
+      "url": "https://blog.algomaster.io/p/design-a-scalable-notification-service",
+      "kind": "article"
+    },
+    {
+      "title": "Good design by Microsoft engineer",
+      "url": "https://serhatgiydiren.com/system-design-interview-notification-service/",
+      "kind": "article"
+    },
+    {
+      "title": "Nice detailed solution video",
+      "url": "https://www.youtube.com/watch?v=bBTPZ9NdSk8",
+      "kind": "video"
+    },
+    {
+      "title": "Solution by Google Engineer",
+      "url": "https://www.youtube.com/watch?v=J-5JozlYIqI",
+      "kind": "video"
+    }
   ]
 }

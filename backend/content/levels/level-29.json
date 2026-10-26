@@ -1,0 +1,127 @@
+{
+  "id": "level-29",
+  "actId": "act-5",
+  "order": 29,
+  "title": "Photo Sharing (Flickr / Google Photos)",
+  "difficulty": "medium",
+  "summary": "Build a personal photo library with resumable uploads, album sharing, asynchronous thumbnails and fast CDN reads.",
+  "narrative": "Build a Flickr / Google Photos-style library: users upload photos resumably, organise albums, share albums by link, browse a timeline, and search by date or place. Unlike Instagram (level-14), there is no follower feed. The APIs are POST /uploads to create a resumable session, PUT chunks to that session, POST /photos to commit, GET /photos/{id}?size= to select a rendition, GET /albums/{id}, and POST /albums/{id}/share. Authorise private albums and issue scoped CDN links for photo reads; sharing links grant access only to their intended album.\n\nThe hard parts are storing billions of small files and serving them quickly. Haystack avoids multiple filesystem-metadata seeks per photo by packing photos into large append-only volume files and locating them through an in-memory index of volume ids and offsets. Blob Storage plays that photo store here. NoSQL holds owner, album membership, volume/offset per size, EXIF date/place and content hash for deduplication; date/place access paths also support basic library searches. Expect ~100 M uploads/day ≈ 1.2 K/s, with ~5× holiday peaks. At ~3 MB/original, originals add ~300 TB/day; four thumbnails totaling ~150 KB add ~15 TB/day. Reads are ~10× uploads and skew toward recent photos.\n\nClients use a Load Balancer and redundant Web Servers for uploads and metadata, and a CDN backed by Blob Storage for photo bytes. Cache hot metadata and commit the original durably before publishing a photo-uploaded event to a Message Queue. Redundant Workers generate four thumbnail sizes asynchronously, write the renditions to Blob Storage and mark each size ready in NoSQL with idempotent updates; return a pending rendition state until ready. The CDN absorbs hot reads so the photo store mainly serves misses and the long tail. Optionally have Workers populate a Search Index for richer date/place and available detected-label searches, and add Monitoring for upload failures and thumbnail backlog.",
+  "objectives": ["Resumable photo APIs", "Haystack-style blob storage", "Async thumbnail generation", "CDN and metadata caching"],
+  "specs": {
+    "functional": [
+      "Create resumable upload sessions, accept chunks and commit photos with durable originals",
+      "Organise albums, create sharing links, browse a timeline and search by date/place",
+      "Store photo and album metadata, per-size blob locations, EXIF date/place and dedupe hashes in NoSQL",
+      "Serve photo bytes through CDN → Blob Storage and cache hot metadata at the app tier",
+      "Enqueue committed uploads; generate four thumbnail sizes in Workers and mark sizes ready in NoSQL"
+    ],
+    "nonFunctional": [
+      "Handle ~1.2 K uploads/s on average with ~5× peaks and ~10× as many reads",
+      "Survive one Web Server or Worker failure",
+      "Keep thumbnail work off upload requests and make retries idempotent"
+    ],
+    "constraints": [
+      "Never connect Web Server directly to Worker; thumbnail work must be queued",
+      "Clients must not access NoSQL directly; authorise metadata and album operations at the app tier",
+      "Connect Blob Storage to the CDN for photo reads; enforce private/shared album access on CDN delivery",
+      "Keep blob bytes in the photo store and point-lookups or readiness updates in NoSQL"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 160,
+    "capacity": [
+      "~100 M uploads/day ≈ 1.2 K/s; holiday peaks ~5×",
+      "~3 MB/original × 100 M/day ≈ 300 TB/day of originals",
+      "Four thumbnails total ~150 KB/photo → ~15 TB/day; reads ~10× uploads"
+    ],
+    "tradeoff": "Packing small photos into append-only volumes reduces metadata seeks but complicates deletion and compaction; Blob Storage represents that durable photo-store abstraction. Asynchronous renditions shorten upload handling while introducing a readiness delay, and CDN caching reduces origin load while requiring careful access control.",
+    "bonus": "Connect Workers to Search Index for richer date/place and detected-label search when labels are available, and add Monitoring for upload and rendition failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Read photos through the CDN" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Fetch photo bytes from Blob Storage" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route upload and album APIs through the Load Balancer" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance photo API requests across Web Servers" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Store original photos durably" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Store photo and album metadata in NoSQL" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache hot photo metadata" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Enqueue photo-uploaded events" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch thumbnail generation to Workers" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Write generated thumbnail sizes" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "nosql-database", "label": "Mark completed renditions ready" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Index date place and available photo labels", "bonus": true },
+    { "id": "m13", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for uploads and thumbnail backlog", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "worker",
+      "message": "Don't generate thumbnails inline in the upload request — enqueue them"
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients access photo and album metadata through the Web Server API."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so uploads and album browsing survive one failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so a failure does not stop thumbnail generation."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "blob-storage",
+      "companionComponentId": "cdn",
+      "message": "Connect Blob Storage to the CDN so photo reads can be served near users."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "blob-storage", "load-balancer", "web-server", "nosql-database", "cache", "message-queue", "worker", "search-index", "monitoring"],
+  "hints": [
+    "Start with Client → CDN → Blob Storage for photos and Client → Load Balancer → Web Server for APIs. Connect Web Server to Blob Storage for originals, NoSQL for photo/album metadata, and Cache for hot metadata.",
+    "Connect Web Server → Message Queue → Worker. The Worker writes thumbnails to Blob Storage and marks sizes ready in NoSQL. Keep generation asynchronous and use repeatable rendition keys so retries do not create duplicate sizes.",
+    "Run two Web Servers and two Workers. Each Web Server connects to Blob Storage, NoSQL, Cache and Message Queue; the queue feeds both Workers, each writing Blob Storage and NoSQL. Add Worker → Search Index and Web Server → Monitoring; retain CDN → Blob Storage."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/develop-a-photo-sharing-platform-like-flickr-or-google-photos",
+  "tips": [
+    "Similar to Design Instagram.",
+    "How will you store a large number of photos?",
+    "How will you serve a photo and make it fast?",
+    "How will you generate thumbnails?",
+    "How will you design the APIs for this?"
+  ],
+  "resources": [
+    {
+      "title": "Must read: Facebook's Photo Storage Paper",
+      "url": "https://www.usenix.org/legacy/event/osdi10/tech/full_papers/Beaver.pdf",
+      "kind": "paper"
+    },
+    {
+      "title": "High level approach",
+      "url": "https://medium.com/%40bugfreeai/key-points-of-a-common-system-design-interview-question-photo-sharing-platform-91f52fa4bf05",
+      "kind": "article"
+    },
+    {
+      "title": "Solution",
+      "url": "https://www.geeksforgeeks.org/design-a-picture-sharing-system-system-design/",
+      "kind": "article"
+    },
+    {
+      "title": "Frontend Solution Video",
+      "url": "https://www.youtube.com/watch?v=FUKGooQXih8",
+      "kind": "video"
+    },
+    {
+      "title": "Mock Interview",
+      "url": "https://interviewing.io/mocks/faang-system-design-photo-sharing-service",
+      "kind": "video"
+    }
+  ]
+}

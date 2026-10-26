@@ -22,5 +22,11 @@
     "order": 4,
     "title": "Data Infrastructure",
     "description": "Build the plumbing everyone else depends on: queues, logs, metrics, analytics and real-time ranking pipelines."
+  },
+  {
+    "id": "act-5",
+    "order": 5,
+    "title": "Everyday Products",
+    "description": "Weather, parts pickers, wikis, marketplaces, photo libraries, logins and on-call tools — product questions where the data model and APIs matter as much as scale."
   }
 ]

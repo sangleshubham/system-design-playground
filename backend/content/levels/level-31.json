@@ -1,0 +1,98 @@
+{
+  "id": "level-31",
+  "actId": "act-5",
+  "order": 31,
+  "title": "On-Call Escalation",
+  "difficulty": "medium",
+  "summary": "Assign incidents through Developer, Manager and Director tiers with durable pending tickets and timed escalation.",
+  "narrative": "Design an on-call escalation system for three employee levels: Developer, Manager and Director. The initial ticket always goes to a developer. If no developer is available or the developer cannot handle it, escalate to a manager; if no manager is available or able to resolve it, escalate to a director. If nobody at any level can take it, place it in a pending queue. This is a product and data-model problem at small scale: ~10 K engineers and ~5 K tickets/day, where losing a ticket matters more than raw throughput.\n\nUse SQL tables employees(id, level DEV|MGR|DIR, team), schedules for on-call periods and availability, tickets(id, severity, state, assignee, level, version), and ticket_events for an audit trail. The state machine is NEW → ASSIGNED(level) → ACKNOWLEDGED → RESOLVED; ESCALATE moves to the next level and PENDING records that no eligible assignee is available. Pending is durable SQL state ordered by severity then age, not just an in-memory queue. Re-offer pending tickets when availability changes. A conditional update on version makes only one competing assignment or transition succeed, with its audit event committed in the same transaction.\n\nClients reach redundant Web Servers through a Load Balancer for ticket and schedule operations. Publish ticket-created, availability-changed and cannot-handle events to a Message Queue; redundant Workers run the escalation engine, read SQL schedules, assign an available person at the current tier, page via Notification Service and register an acknowledgement timeout with Task Scheduler, for example 15 minutes per level. When a timeout fires, the scheduler emits an escalate event back onto the queue. Workers check ticket state and version so an old timeout cannot escalate an already acknowledged or resolved ticket. Persist state and use a transactional outbox with replayable event ids to recover event publication after a crash; optionally park poison events in a Dead Letter Queue and monitor overdue acknowledgements.",
+  "objectives": ["Tiered ticket state machine", "Durable pending queue", "Version-checked assignment", "Acknowledgement timeouts"],
+  "specs": {
+    "functional": [
+      "Assign new tickets to an available Developer, escalate to Manager then Director on inability, unavailability or acknowledgement timeout",
+      "Store employees, on-call schedules, ticket state/version and ticket_events audit history in SQL",
+      "Keep PENDING tickets durably in severity-then-age order and re-offer them on availability changes",
+      "Consume ticket events in Workers, page assignees and schedule 15-minute acknowledgement timeouts per level",
+      "Emit timeout escalation events back to Message Queue and conditionally update ticket versions to prevent competing assignments"
+    ],
+    "nonFunctional": [
+      "Support ~10 K engineers and ~5 K tickets/day with no silently lost tickets",
+      "Keep escalation running after one Worker failure",
+      "Fire acknowledgement timeouts on time and ignore stale timeout events after acknowledgement, reassignment or resolution"
+    ],
+    "constraints": [
+      "Only the escalation engine pages assignees; forbid Web Server → Notification Service",
+      "Clients must not access SQL directly",
+      "Connect Task Scheduler to Workers that register acknowledgement timeouts",
+      "Use version-checked SQL transitions and transactional audit/outbox writes; retry event delivery idempotently"
+    ],
+    "budgetPerHr": 5.0,
+    "latencyTargetMs": 230,
+    "capacity": [
+      "~10 K engineers; ~5 K tickets/day ≈ 0.06 tickets/s",
+      "Acknowledgement timeout example: 15 minutes per tier",
+      "Pending order: highest severity first, then oldest ticket"
+    ],
+    "tradeoff": "A durable state machine and conditional SQL updates simplify ownership at this scale. Queue retries improve recovery but duplicate or stale events must be checked against ticket state/version; timer events re-enter the same pipeline rather than changing assignments outside it.",
+    "bonus": "Connect Message Queue to a Dead Letter Queue for poison events and add Monitoring for pending age and overdue acknowledgements."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route ticket and schedule requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance ticket API requests across Web Servers" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store tickets schedules and employee availability in SQL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish ticket and availability events" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch events to the escalation engine" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Apply version-checked assignments and audit events" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Page the assigned on-call employee" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "task-scheduler", "label": "Register acknowledgement timeouts" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "message-queue", "label": "Enqueue timeout escalation events" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park poison escalation events", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for pending age and overdue acknowledgements", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "notification-service",
+      "message": "Paging is done by the escalation engine, not the request path"
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients access tickets and schedules through Web Servers, never directly from SQL."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "The escalation engine must not be a single point of failure — run at least two Workers."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "worker",
+      "message": "Connect the Task Scheduler to Workers that register acknowledgement timeouts."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "message-queue", "worker", "dead-letter-queue", "notification-service", "task-scheduler", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server, then Web Server → SQL and → Message Queue. Keep the durable pending queue in SQL; ticket and availability events wake the escalation engine.",
+    "Wire Message Queue → Worker → SQL and → Notification Service. Workers make conditional assignments using ticket version, then register timers through Worker → Task Scheduler → Message Queue. Check state/version when a timer returns so an old event cannot reassign a resolved ticket.",
+    "Run two Web Servers and two Workers. Each Web Server reaches SQL and Message Queue; the queue feeds both Workers, each connected to SQL, Notification Service and Task Scheduler. Retain Task Scheduler → Message Queue, then add Message Queue → Dead Letter Queue and Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-an-oncall-escalation-system",
+  "tips": [
+    "The initial ticket always goes to a developer. If no developer is available or able to handle it, it is escalated to a manager, then to a director.",
+    "If no one is available to take the ticket, it goes into a pending queue.",
+    "This is a combination of Product and System Design, not really too much into scalability."
+  ],
+  "resources": [
+    {
+      "title": "Things to consider (Google Doc)",
+      "url": "https://docs.google.com/document/d/1yngBZD2xNYfPRMIy1haQQcpSrZLUrIjErIM92d8mFiA/edit?usp=sharing",
+      "kind": "article"
+    }
+  ]
+}

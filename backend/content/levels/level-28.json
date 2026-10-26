@@ -1,0 +1,119 @@
+{
+  "id": "level-28",
+  "actId": "act-5",
+  "order": 28,
+  "title": "Facebook Marketplace",
+  "difficulty": "easy",
+  "summary": "Browse and search nearby listings with separate spatial and keyword indexes and personalised recommendation ranking.",
+  "narrative": "Build Facebook Marketplace: sellers post a title, description, price, category, photos and location; buyers browse nearby listings, search by keyword with filters, and see a personalised recommended-for-you feed. Messaging and payments are out of scope. At ~1 B monthly users, expect ~10 M new listings/day, or ~115 writes/s. About 200 M daily browsers × ~20 queries generate ~4 B reads/day, or ~46 K/s.\n\nKeep authoritative listing records in NoSQL keyed by listing id, with photos uploaded through the Web Server to Blob Storage and served via CDN. Five photos averaging ~300 KB per listing produce ~15 TB/day. A Geospatial Index uses geohash cells to retrieve listings within 40 km, checking neighboring cells and exact distance at boundaries as in Yelp / Nearby Friends (level-18). A separate Search Index handles keywords, categories and price filters; combine spatial and keyword candidates when both filters are present.\n\nRoute API traffic through a Load Balancer to redundant Web Servers. Publish listing-created and listing-updated events to a Message Queue; a Worker updates both indexes asynchronously, with versioned idempotent updates to avoid old events overwriting newer listings. Hydrate results from NoSQL and check current listing status before showing unavailable items. For recommendations, take candidates from the nearby set and recent searches, then rank with an ML Model Server using predicted click or purchase likelihood. Optional Cache stores hot listings and per-user recommendations; Monitoring tracks index lag and query failures.",
+  "objectives": ["Listing and photo storage", "Nearby geospatial retrieval", "Keyword and filter search", "ML recommendation ranking"],
+  "specs": {
+    "functional": [
+      "Create and update listings with title, description, price, category, photos and location",
+      "Store listing records by id in NoSQL and photo bytes in Blob Storage behind the CDN",
+      "Browse within 40 km via a geohash Geospatial Index; search keywords with category and price filters via Search Index",
+      "Publish listing change events and asynchronously update both indexes with a Worker",
+      "Rank nearby and recent-search candidates with an ML Model Server for personalised recommendations"
+    ],
+    "nonFunctional": [
+      "Handle ~115 new listings/s and ~46 K reads/s on average",
+      "Survive one Web Server failure",
+      "Allow short indexing lag while checking authoritative listing status on result hydration"
+    ],
+    "constraints": [
+      "Clients must not access NoSQL or Search Index directly",
+      "Connect both Search Index and Geospatial Index to the Worker that applies listing events",
+      "Check adjacent geohash cells and exact distance; combine spatial and keyword filters when requested",
+      "Messaging and payments are out of scope"
+    ],
+    "budgetPerHr": 7.0,
+    "latencyTargetMs": 150,
+    "capacity": [
+      "~1 B monthly users; ~10 M new listings/day ≈ 115 writes/s",
+      "~200 M daily browsers × ~20 queries ≈ 4 B reads/day ≈ 46 K/s",
+      "~10 M listings/day × ~5 photos × ~300 KB ≈ 15 TB/day"
+    ],
+    "tradeoff": "Separate spatial and keyword indexes fit different access patterns but require asynchronous updates and result reconciliation. ML ranking can personalise candidate order while cached hot results reduce read load; neither ranking nor indexing should replace authoritative listing-state checks.",
+    "bonus": "Connect Web Servers to Cache for hot listings and per-user recommendations, and add Monitoring for query failures and index lag."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Serve listing photos through the CDN" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Fetch listing photos from Blob Storage" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route listing API requests through the Load Balancer" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance Marketplace requests across Web Servers" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Store authoritative listings in NoSQL" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "blob-storage", "label": "Upload listing photos to Blob Storage" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "geo-index", "label": "Find nearby listings in the Geospatial Index" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Search listing keywords and filters" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "ml-model-server", "label": "Rank recommendation candidates" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish listing change events" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch listing changes to a Worker" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Update keyword and attribute indexes" },
+    { "id": "m13", "kind": "connect", "fromComponentId": "worker", "toComponentId": "geo-index", "label": "Update nearby listing cells" },
+    { "id": "m14", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache hot listings and recommendations", "bonus": true },
+    { "id": "m15", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for search and index lag", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients read and write listings through Web Servers, never directly from NoSQL."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "search-index",
+      "message": "Clients search through the Web Server API, never directly from Search Index."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so Marketplace survives one instance failure."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "search-index",
+      "companionComponentId": "worker",
+      "message": "Connect Search Index to a Worker that applies listing changes."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "geo-index",
+      "companionComponentId": "worker",
+      "message": "Connect Geospatial Index to a Worker that keeps location cells current."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "blob-storage", "load-balancer", "web-server", "nosql-database", "geo-index", "search-index", "ml-model-server", "message-queue", "worker", "cache", "monitoring"],
+  "hints": [
+    "Split Client → CDN → Blob Storage for photo reads from Client → Load Balancer → Web Server for APIs. Connect the app to NoSQL for listings and Blob Storage for photo uploads.",
+    "Connect Web Server → Geospatial Index for nearby results and → Search Index for keywords and filters. As in Yelp (level-18), include adjacent cells then check exact distance. Connect Web Server → ML Model Server to rank nearby and recent-search candidates.",
+    "Run two Web Servers, each connected to NoSQL, Blob Storage, Geospatial Index, Search Index, ML Model Server and Message Queue. Wire Message Queue → Worker → Search Index and Geospatial Index. Add each Web Server → Cache and → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/build-a-marketplace-feature-for-facebook",
+  "tips": [
+    "How will you store and retrieve listings?",
+    "How will you show listings based on location?",
+    "How will you show recommendations?",
+    "How will you add search - if a user wants to search for specific items?"
+  ],
+  "resources": [
+    {
+      "title": "Cheat Sheet",
+      "url": "https://www.reddit.com/r/leetcode/comments/104wf74/system_design_cheatsheet_online_marketplace/",
+      "kind": "discussion"
+    },
+    {
+      "title": "Craigslist Design",
+      "url": "https://medium.com/%40bugfreeai/system-design-interview-practice-design-craigslist-c95ba0238f74",
+      "kind": "article"
+    },
+    {
+      "title": "Mock Interview",
+      "url": "https://www.youtube.com/watch?v=2N0TXrgB9AY",
+      "kind": "video"
+    }
+  ]
+}
