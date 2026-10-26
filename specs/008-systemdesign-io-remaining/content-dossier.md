@@ -790,3 +790,992 @@ replicate it"); requires-companion message-queue ↔ worker.
 Reference: client → cdn → blob-storage; client → load-balancer → web-server ×2; each
 web-server → auth-service, sql-database, cache ×2 (both), message-queue, monitoring;
 message-queue → worker → nosql-database.
+
+---
+
+## Act 7 (unit C6)
+
+### level-39 · Find a Driver — Q40 · hard
+sourceUrl: https://systemdesign.io/question/find-a-rider-for-uber-or-uber-eats
+
+Tips:
+1. Very similar to Proximity Service (Find Nearby Friends). This problem is about maintaining a large geospatial index.
+2. How do you maintain a geospatial index of drivers?
+3. In that index, how do you update the driver location quickly?
+4. How do you remove the driver as soon as you match a rider? You don't want the driver to be matched at the same time.
+5. How do you ensure efficient edits - when a driver location changes, your algorithm should update the index fast.
+
+Resources:
+- Excellent article on geospatial algorithms — https://blog.mapbox.com/a-dive-into-spatial-search-algorithms-ebd0c5e39d2a — article
+- Good solution for Yelp, which applies here — https://systemdesignschool.io/problems/yelp/solution — article
+- Popular Video — https://www.youtube.com/watch?v=M4lR_Va97cQ — video
+- Mock Interview — https://www.youtube.com/watch?v=atywHEArk1w — video
+
+Problem: match a rider's request to a nearby available driver within seconds. Unlike Yelp
+(level-18), the indexed objects move constantly, so the index must be write-optimised.
+The Client here is both the driver app and the rider app. Design: driver apps send a
+location every ~4 s; the location API updates an **in-memory** geospatial index of
+available drivers in place (geohash/H3 cell → set of driver ids; moving a driver is a
+remove from the old cell + add to the new one, O(1); Redis GEO does this with GEOADD) — a
+quadtree that must rebalance is a poor fit for this write rate. A ride request is enqueued;
+the matching service queries the rider's cell and neighbouring rings for available
+drivers, ranks them by ETA, and **reserves** the chosen driver atomically (`SET driver:{id}
+NX EX 15` — or a conditional status update AVAILABLE → OFFERED) before offering, removing
+them from the available index so two riders can never be matched to the same driver. The
+offer is pushed to the driver over their open WebSocket; on accept the trip is written to
+SQL; on decline/timeout the reservation expires and the next candidate is tried.
+Numbers: ~5 M online drivers at peak × 1 update / 4 s ≈ 1.25 M location writes/s;
+~300 ride requests/s at peak per large region set; match p95 < 5 s.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(location + ride-request API); m3 web-server → geo-index (update driver positions in
+place); m4 web-server → message-queue (ride requests); m5 message-queue → worker (matching
+service); m6 worker → geo-index (nearby available drivers; remove the matched one);
+m7 worker → cache (atomic driver reservation with expiry); m8 worker → sql-database
+(trips); m9 client → websocket-server (driver app's open connection); m10 worker →
+websocket-server (push the offer).
+Bonus: m11 connect worker → ml-model-server (rank candidates by predicted ETA and
+acceptance); m12 add monitoring.
+Topology: forbidden client → geo-index; forbidden client → cache.
+Resilience: no-spof web-server; no-spof worker; no-spof geo-index ("replicate the
+in-memory driver index"); requires-companion worker ↔ cache.
+
+Reference: client → load-balancer → web-server ×2; client → websocket-server; each
+web-server → geo-index ×2 (both), message-queue; message-queue → worker ×2; each worker →
+geo-index ×2 (both), cache, sql-database, websocket-server, ml-model-server, monitoring.
+
+### level-40 · ETA & Live Location Sharing — Q27 · expert
+sourceUrl: https://systemdesign.io/question/design-eta-and-location-sharing-between-uber-driver-and-rider
+
+Tips:
+1. How can you utilize past rides data for calculating the ETA?
+2. How can you estimate an ETA directly from maps data?
+3. What if you have your own maps modeled as graphs? How can you calculate ETA there?
+4. For live location sharing, how do you update the location from the driver's device? Will you use push or pull?
+5. How can you transmit location updates fast to the other user?
+
+Resources:
+- ETA prediction (ML system design, Uber Eats-related) — https://mecha-mind.medium.com/ml-system-design-eta-prediction-9dc8000fd86b — article
+- Google Maps ETA: high level approach — https://www.finalroundai.com/interview-questions/google-maps-eta-compute — article
+- Live location tracking: best practices (ok, but not interview depth) — https://www.linkedin.com/pulse/building-live-location-tracking-app-best-practices-real-time-das-cuujc/ — article
+- Location tracking system design on GitHub (ok, but not interview depth) — https://github.com/praveenkumardec89/location-tracking-system-design — article
+
+Problem (the page notes this is after a driver has been matched): show the rider the
+driver moving on the map in real time, plus an ETA to pickup and to destination that
+stays accurate as traffic changes. The Client is both apps. Part 1 — ETA: the road network
+is a graph (intersections = nodes, road segments = edges weighted by travel time); a
+routing engine (Dijkstra/A* with contraction hierarchies for speed) gives a base ETA from
+current segment speeds; live speeds come from aggregating all drivers' GPS pings per
+segment; an ML model trained offline on past trips (time of day, weather, pickup/drop-off
+patterns, the routing ETA as a feature) corrects the residual error. Part 2 — location
+sharing: the driver app **pushes** a GPS fix every 2–4 s over a persistent WebSocket
+(polling would add latency and load); the socket tier publishes it to the trip's Pub/Sub
+channel and the rider's socket server pushes it on — end-to-end < 1 s. The same pings flow
+into a stream that updates segment speeds and archives trips for training.
+Numbers: ~5 M drivers online × 1 ping / 4 s ≈ 1.25 M pings/s; ~2 M trips in progress at
+peak; ~100 K ETA requests/s (every app open and re-route), p99 < 200 ms.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer →
+websocket-server (persistent connections for both apps); m3 websocket-server → pub-sub
+(driver location to the trip channel); m4 pub-sub → websocket-server (deliver to the
+rider's server); m5 websocket-server → message-queue (GPS ping stream); m6 message-queue →
+stream-processor (live segment speeds); m7 stream-processor → cache (speed per road
+segment); m8 load-balancer → web-server (ETA API); m9 web-server → graph-database (road
+graph routing); m10 web-server → cache (live speeds); m11 web-server → ml-model-server
+(ETA correction).
+Bonus: m12 connect message-queue → blob-storage (archive pings and trips for training);
+m13 add monitoring.
+Topology: forbidden client → graph-database; forbidden client → ml-model-server.
+Resilience: no-spof websocket-server; no-spof web-server; requires-companion
+stream-processor ↔ cache.
+
+Reference: client → load-balancer; load-balancer → websocket-server ×2, web-server ×2;
+each websocket-server → pub-sub, message-queue; pub-sub → websocket-server ×2;
+message-queue → stream-processor, blob-storage; stream-processor → cache; each web-server
+→ graph-database, cache, ml-model-server, monitoring.
+
+### level-41 · Surge Pricing — Q25 · expert
+sourceUrl: https://systemdesign.io/question/surge-pricing-system-uber
+
+Tips:
+1. How do you decide when surge pricing is needed?
+2. How do you calculate the pricing?
+3. How do you integrate it into an existing ride sharing system?
+
+Resources:
+- Good overview — https://docs.google.com/document/d/1uJpPuhO6vZK_VCxBYKbCJoQYrbFE9Ihrsfs919X8f40/edit?usp=sharing — article
+- GPT Solution — https://docs.google.com/document/d/1hfUmr8SpBMCkEMlOeXl6Y-H85PMzq-zd07Isb1ltWZE/edit?usp=sharing — article
+
+Problem: raise prices where demand outstrips supply, to pull drivers in and ration rides,
+without flapping and without changing a price the rider already accepted. Design:
+**when** — the city is divided into hexagonal cells (H3, ~1–2 km); every minute, per
+cell, a stream job counts demand (fare quotes / ride requests) and supply (available
+drivers from location pings) over a sliding window; **how** — a pricing model maps the
+demand/supply ratio (plus short-term demand forecast, events, weather) to a multiplier,
+smoothed (EWMA) with hysteresis and caps so prices don't oscillate; results are written to
+a per-cell multiplier map in the cache with an expiry. **Integration** — surge is computed
+off the request path: the quote API only reads the multiplier for the pickup cell,
+returns a fare and stores a **locked quote** (price, multiplier, expiry ~2 min) so the
+rider pays what they saw; dispatch is unchanged. Every multiplier change is kept for
+audit, analytics and regulators; driver apps show a heatmap from the same map.
+Numbers: ~500 K active cells; inputs ≈ 1.25 M driver pings/s + ~50 K quote events/s;
+multipliers recomputed every 60 s per cell; quote reads ~50 K/s, p99 < 50 ms.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(quote + ride-request API, driver pings); m3 web-server → message-queue (demand and supply
+events); m4 message-queue → stream-processor (per-cell windows); m5 stream-processor →
+ml-model-server (multiplier from supply/demand features); m6 stream-processor → cache
+(multiplier per cell); m7 web-server → cache (read the multiplier at quote time); m8
+web-server → sql-database (locked quotes and trips).
+Bonus: m9 connect message-queue → data-warehouse (audit and pricing analytics); m10 add
+monitoring.
+Topology: forbidden web-server → ml-model-server ("Don't compute surge on the quote path —
+read the precomputed multiplier"); required-between via message-queue, from web-server to
+stream-processor.
+Resilience: no-spof web-server; no-spof stream-processor; requires-companion
+stream-processor ↔ cache.
+
+Reference: client → load-balancer → web-server ×2; each web-server → message-queue, cache,
+sql-database, monitoring; message-queue → stream-processor ×2, data-warehouse; each
+stream-processor → ml-model-server, cache.
+
+### level-42 · A/B Testing Platform — Q29 · hard
+sourceUrl: https://systemdesign.io/question/design-an-ab-testing-system-like-optimizely
+
+Tips:
+1. How will you store and retrieve different treatment UI?
+2. How will you measure the success metrics for each treatment?
+3. How will you assign a treatment to a user and maintain it for that user across sessions?
+4. How will the company admin see the treatments?
+5. How will you store the information for the tests? Or, how will you structure the database?
+6. How will you easily turn the test on and off?
+
+Resources:
+- Good design — https://chuan-zhang.medium.com/building-a-trustworthy-a-b-testing-platform-practical-guide-and-an-architecture-demonstration-332446724ba0 — article
+- High level overview — https://xhinliang.medium.com/how-to-design-an-a-b-test-system-1450b06933f — article
+- Building a small homemade A/B test engine — https://medium.com/studocu-techblog/recipe-for-implementing-a-homemade-a-b-testing-engine-2e95c97c8020 — article
+
+Problem: product teams define experiments (variants, traffic split, targeting, success
+and guardrail metrics); users are assigned consistently; results show which variant wins
+with statistical confidence; any test can be stopped instantly. Design: experiment
+definitions live in SQL (experiments, variants with a JSON config payload, allocation,
+targeting rules, metrics, state, results). Treatments are **configuration**, not code
+forks: each variant carries parameters/component keys the app renders; heavy assets live
+behind the CDN. The Feature Flag Service distributes the active configuration to SDKs,
+which evaluate locally: `bucket = hash(experimentId + userId) mod 100` maps a user to a
+variant deterministically, so the same user gets the same treatment on every session and
+device without storing assignments (anonymous users use a persistent cookie id). Turning a
+test off is a flag flip that propagates in seconds. Clients log exposure and metric events
+(clicks, conversions) to the event pipeline; a stream job watches guardrails (sample-ratio
+mismatch, error spikes) in near real time, raw events land in the warehouse, and a daily
+batch job computes per-variant metrics with confidence intervals (t-test, CUPED) into the
+results tables the admin dashboard reads.
+Numbers: ~100 M DAU; ~500 concurrent experiments; assignment is evaluated on ~1 M
+requests/s (local hashing, no database read); ~20 B events/day ≈ 230 K/s.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server (app
++ experiment admin API); m3 web-server → feature-flag-service (assignment and variant
+config); m4 web-server → sql-database (experiments, variants, results); m5 web-server →
+message-queue (exposure and metric events); m6 message-queue → stream-processor
+(real-time guardrails); m7 message-queue → data-warehouse (raw events); m8 web-server →
+task-scheduler (schedule daily analysis for running experiments); m9 task-scheduler →
+batch-processor; m10 batch-processor → data-warehouse (per-variant metrics and
+significance); m11 batch-processor → sql-database (write results for the dashboard).
+Bonus: m12 connect client → cdn (variant assets); m13 stream-processor →
+notification-service (alert the owner when a guardrail regresses).
+Topology: forbidden client → sql-database; forbidden web-server → data-warehouse ("events go
+through the log; never write to or query the warehouse on the request path").
+Resilience: no-spof web-server; no-spof feature-flag-service ("assignment runs on every
+request"); requires-companion task-scheduler ↔ batch-processor.
+
+Reference: client → cdn; client → load-balancer → web-server ×2; each web-server →
+feature-flag-service ×2 (both), sql-database, message-queue, task-scheduler;
+message-queue → stream-processor, data-warehouse; stream-processor → notification-service;
+task-scheduler → batch-processor; batch-processor → data-warehouse, sql-database.
+
+### level-43 · Ads in the Feed — Q55 · expert
+sourceUrl: https://systemdesign.io/question/develop-ads-management-and-display-system-for-social-feed
+
+Tips:
+1. How do you create an ad and display it in your feed?
+2. How do you run an auction?
+3. How can you target ads to certain demographics?
+4. How do you measure performance - clicks, views?
+
+Resources:
+- Overview video — https://www.youtube.com/watch?v=Zcv_899yqhI&t=2s — video
+- One solution — https://dilipkumar.medium.com/facebook-instagram-ad-system-design-e828296ae84a — article
+
+Problem: advertisers create campaigns (budget, bid, schedule, targeting by age, location,
+interests; creatives); the feed shows ads in slots; each slot is filled by an auction;
+advertisers see impressions, clicks and spend. The Web Server tier here serves the ads
+manager API and plays the ad server inside the feed request. Design: campaigns in SQL;
+creatives in Blob Storage behind the CDN; campaign changes stream to workers that build a
+**targeting index** (inverted index: attribute value → eligible ads) in the search index.
+Serving a slot: load the user's features (cache), retrieve candidate ads whose targeting
+matches, predict click probability per candidate with the ML Model Server, rank by
+expected value (eCPM = bid × pCTR × 1000, plus a quality term), run a generalized
+second-price auction (winner pays just enough to beat the runner-up), and skip campaigns
+whose budget is exhausted (spend counters in the cache, with pacing so budgets last the
+day). Measurement: impression and click events flow through the log; a stream job dedupes
+them, filters invalid traffic, updates spend counters within seconds and feeds the
+warehouse for reporting and billing.
+Numbers: ~2 B users; ~500 K ad requests/s at peak, auction p99 < 100 ms; ~10 M active
+ads; ~1 M impression/click events/s.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(feed + ads manager API); m3 web-server → sql-database (campaigns, budgets, bids);
+m4 web-server → message-queue (campaign changes, impression and click events); m5
+message-queue → worker (build the targeting index); m6 worker → search-index; m7
+web-server → search-index (candidate retrieval); m8 web-server → ml-model-server (pCTR
+for the auction); m9 web-server → cache (user features and remaining budget); m10
+message-queue → stream-processor (dedupe, spend); m11 stream-processor → cache (spend and
+pacing counters); m12 stream-processor → data-warehouse (reporting and billing); m13
+client → cdn (creatives).
+Bonus: m14 connect cdn → blob-storage (creative origin); m15 add monitoring.
+Topology: forbidden client → search-index; forbidden web-server → data-warehouse ("never
+query the warehouse while serving an ad").
+Resilience: no-spof web-server; no-spof stream-processor ("if spend counting stops,
+campaigns overspend"); requires-companion search-index ↔ worker.
+
+Reference: client → cdn → blob-storage; client → load-balancer → web-server ×2; each
+web-server → sql-database, message-queue, search-index, ml-model-server, cache,
+monitoring; message-queue → worker, stream-processor ×2; worker → search-index; each
+stream-processor → cache, data-warehouse.
+
+---
+
+## Act 8 (unit C7)
+
+### level-44 · 6 Million Free Burgers — Q42 · medium
+sourceUrl: https://systemdesign.io/question/design-backend-to-distribute-6-million-burgers-in-one-hour
+
+Tips:
+1. How is the food delivered? Email notification?
+2. How do you store the number of vouchers left?
+3. How do you ensure that the number of vouchers is reduced exactly once per user?
+4. How do you do this within the deadline - calculate rate of processing needed and machines needed for that.
+5. What if something fails, how do you handle that?
+
+Resources:
+- Mock Interview — https://interviewing.io/mocks/google-system-design-design-a-free-food-app — video
+- Another Mock Interview — https://interviewing.io/questions/design-a-free-food-app — video
+- Reddit discussion — https://www.reddit.com/r/softwarearchitecture/comments/xlztzr/interview_systems_design_question_that_i_want/ — discussion
+
+Problem: a promotion gives away 6 M free burgers in one hour, at most one per user. Users
+claim in the app and receive a voucher code (email/push) that they redeem in a restaurant.
+Design: pre-generate 6 M unique voucher codes into a list in an in-memory store. A claim
+runs one atomic script: if the user already has a claim marker, return it (idempotent);
+otherwise pop a code and set `claimed:{userId}` — so the count drops exactly once per
+user and never below zero. The claim is acknowledged immediately and a durable record is
+written asynchronously through a queue to SQL (`user_id` primary key = second line of
+defence); workers send the voucher by email/push with retries. The in-memory store runs
+with a replica and append-only persistence; on failover, claims are reconciled from the
+durable records. A rate limiter / waiting room sheds excess load; once codes run out the
+"sold out" response is served from the CDN.
+Numbers: 6 M / 3,600 s ≈ 1,700 claims/s on average, but demand is front-loaded: ~50 M
+users may try in the first minutes → ~100 K requests/s; at ~2 K requests/s per web
+server that is ~50 servers at the peak (autoscaled), while the store handles ~100 K
+simple atomic ops/s per node.
+
+Missions (required): m1 connect client → cdn (app shell and the sold-out page); m2 client →
+load-balancer; m3 load-balancer → web-server; m4 web-server → rate-limiter; m5
+web-server → cache (atomic claim: per-user marker + pop a code); m6 web-server →
+message-queue (claim records); m7 message-queue → worker; m8 worker → sql-database
+(durable claims, unique per user); m9 worker → notification-service (send the code).
+Bonus: m10 connect message-queue → dead-letter-queue; m11 add monitoring.
+Topology: forbidden web-server → sql-database ("don't hit the database on the claim path at
+100 K requests/s"); forbidden web-server → notification-service.
+Resilience: no-spof web-server; no-spof worker; no-spof cache ("run the voucher store with
+a replica so a crash doesn't lose the inventory").
+
+Reference: client → cdn; client → load-balancer → web-server ×2; each web-server →
+rate-limiter, cache ×2 (both), message-queue, monitoring; message-queue → worker ×2,
+dead-letter-queue; each worker → sql-database, notification-service.
+
+### level-45 · Hotel Booking — Q28 · medium
+sourceUrl: https://systemdesign.io/question/design-a-hotel-booking-system
+
+Tips:
+1. This is more high level than most distributed systems questions.
+2. Database design - first come up with the features and then design the DB.
+3. Which DB will you use, and why?
+4. API Design for the different functionalities.
+5. How do you query for room availability?
+6. If two people reserve a room at the same time, how will you handle that?
+7. While a person is checking out a room, how do you prevent others from booking the room?
+
+Resources:
+- Solution from FAANG Engineer — https://www.youtube.com/watch?v=Ale7Fn921GQ — video
+- Hotel reservation (ByteByteGo) — https://bytebytego.com/courses/system-design-interview/hotel-reservation-system — course
+- Good API and High Level Design — https://javascript.plainenglish.io/how-to-design-a-hotel-booking-system-56ef18b6adfc — article
+- High Level Backend Design Video — https://www.youtube.com/watch?v=m67Mjbx6DMY — video
+- Mock Interview — https://www.tryexponent.com/blog/design-a-hotel-booking-service-system-design-interview-question-answer — article
+
+Problem: search hotels by city and dates, see room types with prices and availability,
+reserve, pay, cancel. Features first, then the DB: a **relational database** (ACID
+transactions and constraints matter more than raw scale here): `hotel`, `room_type`,
+`room_type_inventory(hotel_id, room_type_id, date, total, reserved)` — one row per room
+type per night — and `reservation(id, guest_id, hotel_id, room_type_id, check_in,
+check_out, status HOLD|CONFIRMED|CANCELLED|EXPIRED, hold_expires_at, idempotency_key)`.
+Availability for a stay = every night in [check_in, check_out) has `total - reserved ≥
+rooms`. Reserving is one transaction that, for each night, runs `UPDATE … SET reserved =
+reserved + 1 WHERE … AND reserved < total` (or optimistic locking with a version column)
+and aborts if any night fails — two simultaneous bookings of the last room can't both
+succeed. While a guest is checking out, the reservation is a HOLD that already counts in
+`reserved` and expires after ~10 min; an expiry job releases unpaid holds. The reserve API
+takes an idempotency key so a retried click never double-books. APIs: `GET
+/hotels?city&checkIn&checkOut`, `GET /hotels/{id}/rooms?checkIn&checkOut`, `POST
+/reservations` (HOLD), `POST /reservations/{id}/payment`, `DELETE /reservations/{id}`.
+Hotel search runs on a search index; hotel details/rates are cached; availability is
+always checked against the database.
+Numbers (ByteByteGo's sizing): 5,000 hotels, 1 M rooms, ~70 % occupancy, ~3-night stays
+→ ~240 K reservations/day ≈ 3 reservations/s; searches ~100× that.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server; m3
+web-server → search-index (hotel search); m4 web-server → sql-database (inventory and
+reservations in one transaction); m5 web-server → cache (hotel details and rates); m6
+web-server → payment-service; m7 web-server → task-scheduler (hold expiry); m8
+task-scheduler → worker; m9 worker → sql-database (release expired holds).
+Bonus: m10 connect worker → notification-service (confirmation and hold-expiry emails);
+m11 add monitoring.
+Topology: forbidden client → sql-database; required-between via web-server, from client
+to payment-service ("payments are initiated by the backend against a reservation").
+Resilience: no-spof web-server; requires-companion task-scheduler ↔ worker.
+
+Reference: client → load-balancer → web-server ×2; each web-server → search-index,
+sql-database, cache, payment-service, task-scheduler, monitoring; task-scheduler →
+worker → sql-database, notification-service.
+
+### level-46 · Credit Card Processing — Q32 · expert
+sourceUrl: https://systemdesign.io/question/design-a-credit-card-processing-system
+
+Tips:
+1. To clarify: what level are we implementing. For e.g, are we using Stripe?
+2. How will you handle the case where the payment is successful, how will you mark the payment as completed?
+3. How will you handle payment failures?
+4. How do you ensure that a payment doesn't get processed twice?
+5. How do we handle global payments?
+6. How do you conduct a large number of transactions?
+7. How do you handle a burst of payments?
+
+Resources:
+- Detailed solution — https://newsletter.pragmaticengineer.com/p/designing-a-payment-system — article
+- Simpler solution — https://hackernoon.com/system-design-interview-designing-payment-systems-follow-up-questions-and-probable-issues — article
+- Good video explanation — https://www.youtube.com/watch?v=olfaBgJrUBI — video
+
+Problem / scope (answering tip 1): we are an e-commerce platform's payment system that
+uses a payment service provider (PSP, e.g. Stripe/Adyen — the Payment Service component);
+we never talk to card networks directly. Correctness points:
+- Card details are tokenised in the browser with the PSP's SDK (client → PSP directly), so
+  raw card numbers never touch our servers (keeps us out of most PCI scope).
+- `POST /payments` requires an idempotency key; the payment row (state machine PENDING →
+  SUCCEEDED | FAILED, unique idempotency key) is written **before** calling the PSP, and
+  the same key is passed to the PSP so retries never charge twice.
+- Success is marked from the PSP's synchronous response **or** its webhook (the PSP calls
+  our API asynchronously); both paths apply the same idempotent conditional state update.
+  Timeouts/unknown results are resolved by querying the PSP, never by blindly retrying a
+  new charge.
+- On success, a double-entry ledger records the movement (debit customer receivable,
+  credit merchant payable) in the same transaction as the state change, and a
+  payment-succeeded event (transactional outbox) triggers downstream work (wallet,
+  receipts) via the queue; failures are recorded with the decline reason; retryable
+  errors use exponential backoff and finally a DLQ for manual review.
+- A fraud score is checked before the charge.
+- Global payments: route by currency/region to the right PSP or acquirer, store amounts as
+  integer minor units with currency, FX at a quoted rate.
+- Volume and bursts: stateless services scale out, the database is sharded by merchant or
+  payment id, per-merchant rate limits protect downstream PSPs, and asynchronous
+  post-processing absorbs spikes; nightly reconciliation compares the ledger with the PSP's
+  settlement files.
+Numbers: ~1 M payments/day ≈ 12 TPS average; Black Friday peaks ~100× ≈ 1–2 K TPS; PSP
+calls take ~1–3 s.
+
+Missions (required): m1 connect client → payment-service (tokenise the card with the PSP's
+SDK); m2 client → api-gateway; m3 api-gateway → web-server (payment API); m4 web-server
+→ rate-limiter (per-merchant limits); m5 web-server → ml-model-server (fraud score); m6
+web-server → sql-database (payment state + idempotency keys + ledger); m7 web-server →
+payment-service (charge with idempotency key); m8 payment-service → api-gateway (PSP
+webhooks); m9 web-server → message-queue (payment events via outbox); m10 message-queue →
+worker (ledger follow-ups, receipts, status checks for unknown results); m11 worker →
+sql-database; m12 worker → payment-service (query status for timed-out payments); m13
+message-queue → dead-letter-queue.
+Bonus: m14 connect worker → data-warehouse (reconciliation and reporting); m15 add
+monitoring.
+Topology: forbidden client → sql-database; forbidden client → ml-model-server.
+Resilience: no-spof web-server; no-spof worker; requires-companion message-queue ↔
+dead-letter-queue.
+
+Reference: client → payment-service; client → api-gateway → web-server ×2; each web-server
+→ rate-limiter, ml-model-server, sql-database, payment-service, message-queue, monitoring;
+payment-service → api-gateway; message-queue → worker ×2, dead-letter-queue; each worker →
+sql-database, payment-service, data-warehouse.
+
+### level-47 · Wire Transfer API — Q47 · hard
+sourceUrl: https://systemdesign.io/question/design-and-implement-a-wire-transfer-api
+
+Tips:
+1. Similar to the Credit Card Processing question, but with wire transfer. Assume that you are interacting with the banks instead of with the credit card provider.
+2. How will you handle concurrent transactions to the same account? Or from the same account?
+3. How about scale, say the payment was to a business where there can be many payments simultaneously?
+
+(The page's tip 1 says "Question 22" — the site's own numbering; write "the Credit Card
+Processing question" and mention level-46. Tip 2's "hire" is a typo for "handle".)
+
+Resources:
+- Leetcode Discussion (Google phone screen) — https://leetcode.com/discuss/interview-question/1895724/google-first-phone-write-a-wiretransfer-api — discussion
+- Revolut backend interview discussion — https://leetcode.com/discuss/post/651695/revolut-backend-engineer-london-sep-2019-ybf3/ — discussion
+- Video Solution — https://www.youtube.com/watch?v=olfaBgJrUBI&t=365s — video
+
+Problem: `POST /transfers {fromAccountId, toAccount (internal id or bank + account
+number), amount, currency, idempotencyKey}` moves money between accounts we hold and to
+external banks. Correctness points:
+- Strong authentication and authorisation for every money movement.
+- One ACID transaction: check idempotency key, lock the sender's account row (or
+  conditional update `balance >= amount`), write a transfer row (PENDING) and ledger
+  entries that place the funds on hold. Concurrent transfers **from** the same account
+  serialise on that row; when two accounts are involved, lock them in a fixed order (by
+  id) to avoid deadlocks.
+- Transfers **to** a busy business account must not contend on one hot balance row:
+  credits are appended as ledger entries (commutative) and the balance is derived from
+  entries plus periodic snapshots — or split across sub-accounts; events are partitioned
+  by account id so each account's stream is processed in order.
+- External legs are submitted to the bank network asynchronously after commit (outbox →
+  queue → workers); the bank's confirmation or rejection later moves the transfer to
+  COMPLETED, or FAILED with a compensating reversal entry. Never call the bank inside the
+  API transaction.
+Numbers: ~1 M transfers/day ≈ 12/s, peaks ~500/s on payday; a large merchant account can
+receive ~1 K credits/s.
+
+Missions (required): m1 connect client → api-gateway; m2 api-gateway → auth-service; m3
+api-gateway → web-server (transfer API); m4 web-server → sql-database (accounts, ledger,
+transfers, idempotency keys); m5 web-server → message-queue (transfer events, partitioned
+by account); m6 message-queue → worker (bank submission); m7 worker → external-api (bank
+network); m8 worker → sql-database (status updates and reversals); m9 message-queue →
+dead-letter-queue.
+Bonus: m10 connect web-server → ml-model-server (fraud and AML screening); m11 add
+monitoring.
+Topology: forbidden web-server → external-api ("never call the bank inside the API
+request — enqueue after the ledger commit"); forbidden client → sql-database.
+Resilience: no-spof web-server; no-spof worker; requires-companion message-queue ↔
+dead-letter-queue.
+
+Reference: client → api-gateway → auth-service, web-server ×2; each web-server →
+sql-database, message-queue, ml-model-server, monitoring; message-queue → worker ×2,
+dead-letter-queue; each worker → external-api, sql-database.
+
+---
+
+## Act 9 (unit C8)
+
+### level-48 · Sorting Large Data Sets — Q21 · easy
+sourceUrl: https://systemdesign.io/question/design-a-system-for-sorting-large-data-sets
+
+Tips:
+1. How much data do we need to sort?
+2. What kind of machines do we have at our disposal?
+3. How do you make data reading and writing efficient, because you will be reading and writing data from files.
+4. How can we minimize reads and writes to hard drives, because for small data, sorting is done on RAM, and you can't do that with large data.
+
+Resources:
+- Excellent solution — https://quanticdev.com/algorithms/distributed-computing/distributed-sorting/ — article
+- From the same author, a very detailed video — https://www.youtube.com/watch?v=vgKjatRVtys — video
+- Leetcode — https://leetcode.com/discuss/interview-question/4807845/Microsoft-Interview/ — discussion
+
+Problem: sort 10 TB of 100-byte records (10^11 records) stored as files, on a cluster of
+commodity machines with 64 GB RAM each — far more data than any machine's memory. The
+Client here is the engineer submitting the job. One machine: **external merge sort** —
+read RAM-sized chunks, sort each in memory, write each as a sorted run, then k-way merge
+the runs with a min-heap, streaming with large sequential buffered reads/writes.
+Distributed (TeraSort/MapReduce): sample keys to pick range-partition boundaries; map
+tasks read input splits in parallel and partition records by key range (shuffle); each
+reduce task sorts its own range (externally if needed) and writes one part file;
+concatenating part files in order gives the globally sorted output. Minimising disk I/O:
+sequential access only, big buffers, compress runs, high merge fan-in so the data is
+read and written as few times as possible (ideally two passes), and keep runs as large as
+RAM allows. A coordinator tracks tasks and re-runs only the tasks of a failed machine.
+Numbers: 10 TB over 100 machines ≈ 100 GB each; at ~200 MB/s sequential disk throughput,
+one pass over 100 GB takes ~8 min, so each extra pass is expensive; the shuffle moves
+~10 TB across the network.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(job API); m3 web-server → sql-database (job metadata, partition boundaries, progress);
+m4 web-server → task-scheduler (coordinator); m5 task-scheduler → batch-processor
+(sample, partition, shuffle, merge); m6 batch-processor → blob-storage (read input splits,
+write sorted part files); m7 batch-processor → sql-database (task progress, output
+manifest).
+Bonus: m8 connect batch-processor → notification-service (job finished or failed); m9 add
+monitoring.
+Topology: forbidden web-server → blob-storage ("don't stream terabytes through the API
+server — the cluster reads and writes storage directly").
+Resilience: no-spof batch-processor ("sorting needs many machines; a failure re-runs only
+its tasks"); requires-companion task-scheduler ↔ batch-processor.
+
+Reference: client → load-balancer → web-server; web-server → sql-database,
+task-scheduler, monitoring; task-scheduler → batch-processor ×2; each batch-processor →
+blob-storage, sql-database, notification-service.
+
+### level-49 · Top-K Bestsellers — Q22 · easy
+sourceUrl: https://systemdesign.io/question/top-k-elements-app-store-rankings-amazon-bestsellers
+
+Tips:
+1. What data structure will you use to rank items?
+2. How real-time is the ranking?
+3. Do you do real-time or a scheduled job?
+4. How do you handle this at scale?
+
+Resources:
+- Solution from ex-Meta engineer — https://www.youtube.com/watch?v=1lfktgZ9Eeo — video
+- Solution from FAANG Engineer — https://www.youtube.com/watch?v=RvZbdYvrFeg — video
+- Very detailed solution from Microsoft engineer — https://serhatgiydiren.com/system-design-interview-top-k-problem-heavy-hitters/ — article
+- Solution on Blind — https://www.teamblind.com/post/Please-critique-my-system-design-for-Top-K-most-searched-terms-Cfrqhnhk — discussion
+
+Problem: "Top 100 free apps", "Amazon bestsellers in Books" — per category and region,
+for the last hour and the last day. Answer to tip 3 is **both** (the heavy-hitters
+article's design): a **fast path** of stream processors keeping a count-min sketch plus a
+min-heap of size K per category and window — small memory, results within a minute, but
+approximate (counts may be overestimated); and a **slow path** where raw events are
+stored and a scheduled batch job (MapReduce) computes exact counts and exact top-K for
+each completed hour/day, replacing the approximate list. Reads always come from
+precomputed lists in the cache. Distinguish from level-23 (sliding windows over article
+shares): here the question is precision vs freshness.
+Numbers: ~1 B purchase/download events/day ≈ 12 K/s (50 K/s peak); ~10 M items, ~50
+categories × ~100 regions; K = 100.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(event + rankings API); m3 web-server → message-queue (purchase and download events); m4
+message-queue → stream-processor (count-min sketch + heap); m5 stream-processor → cache
+(approximate top-K); m6 message-queue → blob-storage (raw events); m7 web-server →
+task-scheduler (ranking definitions: category × region × window); m8 task-scheduler →
+batch-processor (hourly/daily exact recount); m9 batch-processor → blob-storage; m10
+batch-processor → nosql-database (exact rankings); m11 batch-processor → cache (replace
+the approximate list); m12 web-server → cache (read rankings).
+Bonus: m13 connect cache → nosql-database (fall back to the last exact list on a miss);
+m14 add monitoring.
+Topology: forbidden client → cache; required-between via message-queue, from web-server to
+stream-processor.
+Resilience: no-spof web-server; no-spof stream-processor; requires-companion
+task-scheduler ↔ batch-processor.
+
+Reference: client → load-balancer → web-server ×2; each web-server → message-queue,
+task-scheduler, cache, monitoring; message-queue → stream-processor ×2, blob-storage;
+each stream-processor → cache; task-scheduler → batch-processor → blob-storage,
+nosql-database, cache; cache → nosql-database.
+
+### level-50 · Job Scheduler — Q23 · easy
+sourceUrl: https://systemdesign.io/question/design-a-job-scheduler
+
+Tips:
+1. How will you do this on a single machine first?
+2. How will you schedule jobs and execute them at the right time?
+3. What if there are multiple jobs at the same time?
+4. What if a job comes in that needs to be executed very soon?
+5. How do you scale it across multiple machines to handle more jobs?
+
+Resources:
+- Popular Leetcode Discussion — https://leetcode.com/discuss/general-discussion/1082786/System-Design%3A-Designing-a-distributed-Job-Scheduler-or-Many-interesting-concepts-to-learn — discussion
+- Solution from Google Engineer — https://www.youtube.com/watch?v=pzDwYHRzEnk — video
+- High Level Overview — https://blog.algomaster.io/p/design-a-distributed-job-scheduler — article
+- Mock Interview — https://interviewing.io/mocks/faang-system-design-job-scheduler — video
+
+Problem: users submit jobs to run once at a time T or on a cron schedule, with priorities
+and retries; jobs must run on time (within ~1 s) and not be lost. Single machine: a
+min-heap ordered by next run time, a timer thread sleeping until the earliest job, and a
+worker pool. Distributed: job definitions and `next_run_time` live in SQL; several
+scheduler instances each own a shard of jobs (ownership via a coordination service) and
+repeatedly claim jobs due in the next few seconds with a lease (conditional update), push
+them to a queue (separate priority lanes) and advance `next_run_time` for recurring jobs.
+Jobs due sooner than the next polling window are handed to the scheduler directly on
+submit. Workers pull runs, execute idempotently, record status, retry with backoff; runs
+that keep failing land in a DLQ; a run whose worker dies is re-delivered when its lease or
+visibility timeout expires (at-least-once). Many jobs at the same moment are absorbed by
+the queue and worker autoscaling.
+Numbers: ~100 M scheduled jobs; ~10 K runs/s at peak (the top of each hour spikes ~10×).
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server (job
+API); m3 web-server → sql-database (job definitions, next run time, run history); m4
+web-server → task-scheduler (jobs due very soon); m5 task-scheduler → sql-database (claim
+due jobs with a lease); m6 task-scheduler → message-queue (enqueue runs by priority); m7
+message-queue → worker; m8 worker → sql-database (run status, next run); m9 message-queue
+→ dead-letter-queue.
+Bonus: m10 connect task-scheduler → zookeeper-etcd (shard ownership and leader election);
+m11 add monitoring.
+Topology: forbidden web-server → worker; required-between via message-queue, from
+task-scheduler to worker.
+Resilience: no-spof task-scheduler ("a single scheduler is a single point of failure —
+run several, each owning shards"); no-spof worker; requires-companion message-queue ↔
+dead-letter-queue.
+
+Reference: client → load-balancer → web-server ×2; each web-server → sql-database,
+task-scheduler ×2 (both), monitoring; each task-scheduler → sql-database, message-queue,
+zookeeper-etcd; message-queue → worker ×2, dead-letter-queue; each worker → sql-database.
+
+### level-51 · Bot Fleet Coordinator — Q52 · hard
+sourceUrl: https://systemdesign.io/question/design-a-distributed-botnet
+
+Framing (keep it): the interview's "botnet" is a fleet of machines **you own and operate**
+(e.g. the Lyft variant: bots that download a large set of files) that must be coordinated
+to finish one job. Do not describe malware, infection, evasion or attacking anyone — the
+level is about master/worker coordination.
+
+Tips (the page's bullets, without its "To consider:" heading):
+1. It is essentially the same as coordinating a bunch of machines towards doing a particular task, and tracking it.
+2. You can take the MapReduce template - master-workers, heartbeats for tracking tasks, etc.
+3. How will you send a task to the cluster of computers?
+4. How will you keep track of each computer's task?
+5. What will you do if a computer fails? How will you get notified?
+6. How will you know when all the computers have completed the task?
+
+Resources:
+- MapReduce Paper - which coordinates a cluster of machines to do a task — https://static.googleusercontent.com/media/research.google.com/en//archive/mapreduce-osdi04.pdf — paper
+- Leetcode Discussion — https://leetcode.com/discuss/post/1375361/botnet-system-designfacebook-design-roun-jv0g/ — discussion
+- Lyft: design bots to download files (discussion) — https://leetcode.com/discuss/post/850071/lyft-virtual-onsite-design-bots-to-downl-4v5q/ — discussion
+- Blind — https://www.teamblind.com/post/System-design-for-Botnet-5x0Mq34z — discussion
+
+Design (MapReduce's master/worker template): the operator (the Client) submits a job; the
+coordinator splits it into tasks, records them in SQL (task, state, assigned bot, attempt)
+and publishes them to a task queue; bots **pull** tasks (scales to thousands, works behind
+NAT), run them, write outputs to object storage, and report completion back to the
+coordinator. Liveness: each bot holds a session/lease in a coordination service
+(ZooKeeper/etcd) kept alive by heartbeats; when a session expires the coordinator is
+notified (watch) and re-queues that bot's in-flight tasks; tasks are idempotent so a
+re-run is safe; stragglers near the end get speculative backup copies. Completion: the
+job is done when every task is marked done (a counter of remaining tasks reaching zero).
+The coordinator itself is replicated: a standby takes over via leader election, and job
+state survives because it is in the database.
+Numbers: 10 K bots; a job of 10 M tasks of ~1 s each ≈ 1,000 s of fleet time; heartbeats
+every 5 s ≈ 2 K/s; a bot is declared dead after ~3 missed heartbeats (~15 s).
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(coordinator: submit, split, track); m3 web-server → sql-database (jobs, tasks,
+assignments); m4 web-server → message-queue (task queue); m5 message-queue → worker (bots
+pull tasks); m6 worker → zookeeper-etcd (membership and heartbeats); m7 web-server →
+zookeeper-etcd (leader election; watch for dead bots); m8 worker → blob-storage (task
+outputs); m9 worker → web-server (report completion).
+Bonus: m10 connect web-server → notification-service (tell the operator when the job
+completes or fails); m11 add monitoring.
+Topology: forbidden client → worker; forbidden client → message-queue.
+Resilience: no-spof web-server ("run a standby coordinator"); no-spof worker; no-spof
+zookeeper-etcd ("run a quorum ensemble").
+
+Reference: client → load-balancer → web-server ×2; each web-server → sql-database,
+message-queue, zookeeper-etcd ×2 (both), notification-service, monitoring; message-queue
+→ worker ×2; each worker → zookeeper-etcd ×2 (both), blob-storage, web-server ×2 (both).
+
+### level-52 · Cloud Data Migration — Q51 · expert
+sourceUrl: https://systemdesign.io/question/create-a-system-to-migrate-large-data-to-google-cloud
+
+Tips:
+1. How will you structure the migration? Which machine manages it?
+2. How do we ensure no data is lost in the process?
+3. How will you ensure that the file's data didn't change in transit?
+4. What are some strategies to speed up the transfer?
+
+Resources:
+- 3 strategies — https://newrelic.com/blog/best-practices/migrating-data-to-cloud-avoid-downtime-strategies — article
+- Related interview experience — https://leetcode.com/discuss/post/1733573/rubrik-file-transfer-interview-question-43hjl/ — discussion
+
+Problem: move ~5 PB (~2 B files) from an on-premises file store into Google Cloud Storage
+while the source stays in use, with zero data loss and verified integrity. The Client is
+the migration operator's console. Two Blob Storage nodes: one is the on-prem source, one
+is the GCS destination (say so in the narrative). Design: a migration controller builds a
+**manifest** (path, size, mtime, checksum, state per file/chunk) in SQL by listing the
+source, splits it into transfer tasks and enqueues them; many transfer agents running next
+to the source pull tasks, read files, and upload them (large files as parallel multipart /
+composite uploads, resumable), computing CRC32C/MD5 on the source bytes and comparing with
+the checksum GCS reports for the stored object — a mismatch fails the task and it is
+retried. Agents record every verified file in the manifest, so the migration resumes
+exactly where it stopped. No data loss: the manifest is the source of truth; a final
+reconciliation compares source and destination listings (count, sizes, checksums); the
+source is never deleted until verification passes. Files changing during the copy are
+caught by scheduled **delta sync** passes (changed mtime/size/checksum) until a short
+write freeze for cutover. Speed: parallel agents and streams, compression for
+compressible data, bandwidth throttling to protect production, a dedicated interconnect,
+and for multi-petabyte sets offline Transfer Appliances.
+Numbers: 5 PB over a 10 Gbps link (~1.25 GB/s ≈ 108 TB/day) ≈ 46 days at full line rate;
+a 100 Gbps interconnect ≈ 5 days; ~2 B files → ~460 files/s just to keep up over 50 days.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(migration controller); m3 web-server → sql-database (manifest); m4 web-server →
+message-queue (transfer tasks); m5 message-queue → worker (transfer agents); m6 worker →
+blob-storage (read the source, write the destination with checksums); m7 worker →
+sql-database (record verified files); m8 message-queue → dead-letter-queue; m9 web-server
+→ task-scheduler (delta-sync passes until cutover); m10 task-scheduler → message-queue.
+Bonus: m11 connect worker → rate-limiter (bandwidth throttling to protect production);
+m12 add monitoring.
+Topology: forbidden web-server → blob-storage ("data moves agent-to-bucket, never through
+the controller"); required-between via message-queue, from web-server to worker.
+Resilience: no-spof worker; requires-companion message-queue ↔ dead-letter-queue;
+requires-companion task-scheduler ↔ message-queue.
+
+Reference: client → load-balancer → web-server; web-server → sql-database, message-queue,
+task-scheduler, monitoring; task-scheduler → message-queue; message-queue → worker ×2,
+dead-letter-queue; each worker → blob-storage ×2 (both: source and destination),
+sql-database, rate-limiter.
+
+---
+
+## Act 10 (unit C9)
+
+### level-53 · File Downloader — Q43 · hard
+sourceUrl: https://systemdesign.io/question/design-a-file-downloader-library
+
+Tips:
+1. Backend: what does the API look like?
+2. How do you do this at scale?
+3. How can you support large files?
+4. How can you utilize cache for popular files?
+
+Resources:
+- Leetcode Discussion — https://leetcode.com/discuss/interview-question/system-design/1587255/Facebook-System-Design — discussion
+- Video Solution — https://www.youtube.com/watch?v=u520bdagKkU — video
+
+Problem: a client library (in the app) plus the backend it talks to, for downloading
+files from KB to tens of GB: progress, pause/resume, survive flaky networks, verify
+integrity. Library: fetch metadata first (`GET /files/{id}` → size, SHA-256, chunk size,
+a short-lived signed download URL); download fixed-size chunks (e.g. 8 MB) with HTTP
+**Range** requests (`206 Partial Content`) over a few parallel connections; persist
+which chunks are done so a pause, crash or network switch resumes from the last
+completed chunk; retry failed chunks with exponential backoff and jitter; verify the
+final hash; refresh the signed URL when it expires. Backend: the API never streams file
+bytes — it authorises the request, returns metadata and signs a URL; the bytes come from
+the CDN, whose edges cache popular files (most traffic is a small set of hot files) and
+fetch misses from object storage. Per-user download quotas throttle abuse.
+Numbers: ~10 M downloads/day averaging ~200 MB ≈ 2 PB/day ≈ 185 Gbps of egress; the top
+5 % of files account for ~80 % of bytes, so the CDN hit ratio should exceed 90 %.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(metadata and signed-URL API); m3 web-server → auth-service (authorise and sign the URL);
+m4 web-server → sql-database (file metadata: size, hash, chunk size, ACL); m5 web-server
+→ cache (hot metadata); m6 client → cdn (ranged chunk downloads); m7 cdn → blob-storage
+(origin).
+Bonus: m8 connect web-server → rate-limiter (per-user download quotas); m9 add monitoring.
+Topology: forbidden web-server → blob-storage ("don't stream file bytes through the API
+servers — hand out signed URLs and let the CDN serve range requests").
+Resilience: no-spof web-server; requires-companion blob-storage ↔ cdn.
+
+Reference: client → cdn → blob-storage; client → load-balancer → web-server ×2; each
+web-server → auth-service, sql-database, cache, rate-limiter, monitoring.
+
+### level-54 · Peer-to-Peer File Transfer (BitTorrent) — Q53 · hard
+sourceUrl: https://systemdesign.io/question/create-a-distributed-file-transfer-system-like-bittorrent
+
+Tips:
+1. How will you ensure that a file is hosted on the system reliably, even if one machine goes down?
+2. If a user wants to download a file, how do you locate the machine that holds it?
+3. You probably need some sort of ledger or metadata table, how will you store that?
+4. How will you make sure that a download is completed?
+5. When a machine is added, how do you scale the cluster?
+6. How do you secure the files and ensure no one modifies them?
+
+Resources:
+- Great paper on this topic — https://web.cs.ucla.edu/classes/cs217/05BitTorrent.pdf — paper
+- Article on this — https://medium.com/@abhinavcv007/bittorrent-part-1-the-engineering-behind-the-bittorrent-protocol-04e70ee01d58 — article
+- High Level Video Explanation — https://www.youtube.com/watch?v=6PWUCFmOQwQ — video
+
+Problem: distribute large files to many users where the users' machines (peers) do most
+of the uploading. Use **two Client nodes** ("Peer A", "Peer B") wired to each other —
+peers exchange pieces directly. Design: a file is split into pieces (256 KB–4 MB); its
+metainfo lists each piece's hash (SHA-1 in v1, a SHA-256 Merkle tree in v2) and is
+identified by the info-hash; the publisher signs the metainfo. Locating holders: the
+tracker maps info-hash → current peers (peers re-announce periodically, entries expire);
+a DHT (Kademlia) removes the tracker as a single point. Metadata ledger: torrents
+(info-hash, piece hashes, size, signature, seeding status) in a key-value store. Peers
+download rarest pieces first from several peers at once, reciprocate uploads
+(tit-for-tat), verify every piece's hash before accepting it — a tampered or corrupt
+piece is discarded and re-fetched — and the download is complete when all piece hashes
+verify. Reliability: keep at least ~3 seeders per file — operator-run seed boxes start
+seeding under-replicated torrents, and an HTTP web seed (CDN over object storage) is the
+fallback. Scaling: a new machine just announces and joins the swarm; trackers are sharded
+by info-hash.
+Numbers: a popular 4 GB file in 4 MB pieces = 1,000 pieces; swarms of 10 K+ peers;
+announces every ~30 min per peer per torrent.
+
+Missions (required): m1 connect client → client (peers exchange pieces directly); m2
+client → load-balancer; m3 load-balancer → web-server (tracker announce/scrape); m4
+web-server → cache (swarm membership: info-hash → peers, with TTL); m5 web-server →
+nosql-database (torrent metadata and piece hashes); m6 client → cdn (web seed fallback,
+range requests); m7 cdn → blob-storage; m8 web-server → message-queue (under-replicated
+torrent events); m9 message-queue → worker (seed boxes); m10 worker → blob-storage (read
+the content they seed).
+Bonus: m11 connect worker → web-server (seed boxes announce themselves to the tracker);
+m12 add monitoring.
+Topology: forbidden client → nosql-database; required-between via web-server, from client
+to cache.
+Resilience: no-spof web-server ("run several trackers"); no-spof worker ("at least two
+seed boxes"); requires-companion blob-storage ↔ cdn.
+
+Reference: client "Peer A" → client "Peer B"; client "Peer B" → client "Peer A"; each
+client → load-balancer, cdn; load-balancer → web-server ×2; each web-server → cache,
+nosql-database, message-queue, monitoring; cdn → blob-storage; message-queue → worker ×2;
+each worker → blob-storage, web-server ×2 (both).
+
+### level-55 · Cluster Health Monitor — Q39 · medium
+sourceUrl: https://systemdesign.io/question/design-a-system-to-monitor-the-health-of-a-cluster
+
+Tips:
+1. What metrics will you track for health?
+2. How will you collect those metrics? Will you utilize a heartbeat?
+3. How will you log the status of each metric?
+4. What will you do if a metric is down? Will you have an action for each metric? For example, if a cluster is not responding, will you ask for a restart?
+5. How will you display the monitoring to the user? Through a dashboard?
+
+Resources:
+- Good starting point: Interview experience — https://medium.com/%40ajingnv/system-design-a-server-health-monitoring-system-9bdd0066bb9c — article
+- Solution — https://systemdesignschool.io/problems/realtime-monitoring-system/solution — article
+- Leetcode Discussion — https://leetcode.com/discuss/interview-question/system-design/958919/System-Design-Interview-or-Service-Health-Monitoring-and-Alerting-Service — discussion
+
+Problem: know within ~30 s when any node or service in a cluster is unhealthy, alert the
+on-call, fix common failures automatically, and show the cluster's state on a dashboard.
+Unlike level-21 (metrics collection at scale), the focus is **failure detection and
+automated action**. The Client here is both the agents on every cluster node and the
+engineers opening the dashboard (say so). Metrics: liveness heartbeat, CPU, memory, disk
+space, disk/network errors, process up, request error rate and latency. Collection: an
+agent on each node pushes a heartbeat plus metrics every 10 s; a node missing 3
+heartbeats is suspected down (confirm with an active probe before acting, to avoid false
+positives from a network blip). Status: every metric point goes to the time-series DB,
+and the current health state per node/service (last heartbeat, status, since when) is
+kept in the cache for the status board; every state change is logged. Rules: each metric
+has thresholds over a window and an action — page the on-call, and/or run a remediation
+runbook (restart the process, drain and replace the node) through workers, with safety
+limits (never auto-restart more than a few % of the cluster at once). Dashboard: status
+board + charts.
+Numbers: 10 K nodes × (1 heartbeat + ~100 metrics) every 10 s ≈ 100 K points/s; detection
+target ≤ 30 s; ~200 engineers on the dashboard.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(ingest + dashboard API); m3 web-server → message-queue (heartbeats and metrics); m4
+message-queue → stream-processor (failure detector and rules); m5 stream-processor →
+timeseries-db; m6 stream-processor → cache (current health state per node); m7
+stream-processor → notification-service (page the on-call); m8 stream-processor →
+message-queue (remediation actions); m9 message-queue → worker (runbooks: restart, drain,
+replace); m10 web-server → timeseries-db (dashboard charts); m11 web-server → cache
+(status board).
+Bonus: m12 connect worker → sql-database (audit log of every automated action); m13
+timeseries-db → blob-storage (downsample and archive).
+Topology: required-between via message-queue, from web-server to stream-processor;
+forbidden web-server → worker ("remediation is triggered by the rules engine, not by the
+ingest path").
+Resilience: no-spof web-server; no-spof stream-processor ("the failure detector must not
+itself be a single point of failure"); requires-companion stream-processor ↔ cache.
+
+Reference: client → load-balancer → web-server ×2; each web-server → message-queue,
+timeseries-db, cache; message-queue → stream-processor ×2, worker; each stream-processor →
+timeseries-db, cache, notification-service, message-queue; worker → sql-database;
+timeseries-db → blob-storage.
+
+### level-56 · Distributed Tracing — Q41 · expert
+sourceUrl: https://systemdesign.io/question/design-a-distributed-tracing-system
+
+Tips:
+1. How will you collect information from various parts of your backend?
+2. Where will you send the info and how will you store it?
+3. How will you map a trace for a particular request? Will you use a request id, or something else?
+4. If an error happens, how will you surface relevant information to the system admin?
+5. How will you handle machines going down?
+
+Resources:
+- Leetcode Discussion — https://leetcode.com/discuss/interview-question/system-design/313117/Design-a-system-capable-of-tracking-bad-request-down-quickly — discussion
+- Great intro to Tracing — https://betterstack.com/community/guides/observability/distributed-tracing/ — article
+- Dapper research paper — https://research.google/pubs/pub36356/ — paper
+- Solution from FAANG engineer — https://www.youtube.com/watch?v=Jkhw_FSikX0 — video
+
+Problem: follow a single request across hundreds of microservices to find where it was
+slow or failed. The Web Server tier here stands for all the instrumented services; the
+same tier also hosts the trace query API that engineers use (say so). Design (Dapper,
+OpenTelemetry): the edge assigns a **trace id**; every service propagates it (W3C
+`traceparent` header) and records **spans** (span id, parent span id, service, operation,
+start, duration, status, tags) through an instrumentation library; spans are buffered and
+exported asynchronously to a nearby collector so tracing never blocks or fails a request
+(when the collector is unreachable, spans are dropped, not retried forever). Sampling:
+head-based (e.g. 1 %) to bound volume, plus tail-based decisions in the processing tier
+that keep every trace with an error or high latency. Collectors batch spans into a log
+partitioned by trace id; stream processors assemble spans into traces, apply tail
+sampling, write traces to a wide-column store keyed by trace id and index searchable
+fields (service, operation, status, duration) in a search index. Errors surface as alerts
+on new error signatures or error-rate spikes linking to example trace ids, and in the UI's
+waterfall view. Machines going down: collectors are stateless behind a load balancer, the
+log is replicated, and losing a small fraction of spans is acceptable.
+Numbers: 1 M requests/s × ~20 spans ≈ 20 M spans/s unsampled; 1 % head sampling + all
+errors ≈ 200 K spans/s × ~500 B ≈ 100 MB/s ≈ 8.6 TB/day; 7 days hot retention.
+
+Missions (required): m1 connect client → load-balancer; m2 load-balancer → web-server
+(instrumented services + trace query API); m3 web-server → trace-collector (async span
+export); m4 trace-collector → message-queue (spans partitioned by trace id); m5
+message-queue → stream-processor (assemble traces, tail sampling); m6 stream-processor →
+nosql-database (traces by trace id); m7 stream-processor → search-index (searchable
+fields); m8 stream-processor → notification-service (alert on error spikes with example
+trace ids); m9 web-server → search-index (find traces); m10 web-server → nosql-database
+(fetch a full trace).
+Bonus: m11 connect nosql-database → blob-storage (age out to cold storage); m12 add
+monitoring.
+Topology: required-between via trace-collector, from web-server to message-queue
+("services export spans to a collector, never straight into the log"); forbidden
+web-server → stream-processor.
+Resilience: no-spof trace-collector; no-spof stream-processor; requires-companion
+message-queue ↔ stream-processor.
+
+Reference: client → load-balancer → web-server ×2; each web-server → trace-collector ×2
+(both), search-index, nosql-database, monitoring; each trace-collector → message-queue;
+message-queue → stream-processor ×2; each stream-processor → nosql-database,
+search-index, notification-service; nosql-database → blob-storage.
+
+### level-57 · Distributed Database Control Plane — Q34 · expert
+sourceUrl: https://systemdesign.io/question/design-a-control-plane-for-a-distributed-database
+
+Tips:
+1. What are the core functionalities of your DB's control plane? E.g, provisioning, configuration management, monitoring, scaling, backups, etc.
+2. How does your DB manage creating and managing new tables?
+3. How does your DB handle scaling?
+4. How does your DB handle authentication?
+5. How about monitoring and alerts? What is monitored?
+
+Resources:
+- What a control plane is (video) — https://www.youtube.com/watch?v=Ep1QW-wOmgc — video
+- DynamoDB Paper — https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf — paper
+
+(The second link is the 2007 Dynamo paper — the predecessor of DynamoDB; titling it "Dynamo
+paper (Amazon, 2007)" is more accurate. Use that title.)
+
+Problem: design the control plane of a DynamoDB-like managed database. The **data plane**
+(request routers + storage nodes) serves reads and writes; the **control plane** handles
+everything else: create/update/delete tables, configuration, partition placement,
+scaling (split hot or large partitions, add nodes, move replicas), backups/restore,
+authentication and authorisation, health and monitoring. Key principle: the data plane
+must keep serving if the control plane is down (static stability) — routers cache the
+partition map and never call the control plane per request. Design: the management API
+authenticates every call (IAM-style policies, API keys) and records the desired state
+(tables, schema, capacity, partitions, operations) in a strongly consistent metadata
+database; long-running operations (CreateTable → CREATING → ACTIVE, partition split,
+backup) run as idempotent, resumable workflows on workers that drive storage nodes and
+publish the new partition map to a consensus-backed config store (ZooKeeper/etcd), which
+request routers watch. Scaling: monitor per-partition size and throughput; split
+partitions beyond ~10 GB or hot keys' throughput; rebalance replicas when nodes are added.
+Backups: snapshots to object storage (point-in-time recovery from logs). Monitoring:
+storage nodes report health, latency, throttling, storage and replication lag; alerts
+page the on-call.
+Numbers: ~100 K tables; ~1 K control-plane operations/min; data plane ~10 M requests/s
+across ~10 K storage nodes, 3 replicas per partition.
+
+Missions (required): m1 connect client → api-gateway (management API); m2 api-gateway →
+auth-service; m3 api-gateway → web-server (control-plane service); m4 web-server →
+sql-database (metadata, desired state, operations); m5 web-server → message-queue
+(long-running operations); m6 message-queue → worker (workflow engine); m7 worker →
+nosql-database (provision, split, move partitions on storage nodes); m8 worker →
+zookeeper-etcd (publish the partition map); m9 worker → blob-storage (backups); m10 client
+→ load-balancer (data-plane traffic); m11 load-balancer → reverse-proxy (request routers);
+m12 reverse-proxy → zookeeper-etcd (watch the partition map); m13 reverse-proxy →
+nosql-database.
+Bonus: m14 connect nosql-database → monitoring (node health and per-table metrics); m15
+monitoring → notification-service (page the on-call).
+Topology: forbidden reverse-proxy → web-server ("the data path must not depend on the
+control plane"); forbidden reverse-proxy → sql-database ("routers read the partition map
+from the config store, not the metadata database").
+Resilience: no-spof reverse-proxy; no-spof nosql-database ("replicate every partition");
+no-spof zookeeper-etcd ("run a quorum"); requires-companion message-queue ↔ worker.
+
+Reference: client → api-gateway → auth-service, web-server; web-server → sql-database,
+message-queue; message-queue → worker; worker → nosql-database ×2 (both), zookeeper-etcd ×2
+(both), blob-storage; client → load-balancer → reverse-proxy ×2; each reverse-proxy →
+zookeeper-etcd ×2 (both), nosql-database ×2 (both); each nosql-database → monitoring;
+monitoring → notification-service.
