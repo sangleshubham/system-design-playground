@@ -1,0 +1,114 @@
+{
+  "id": "level-47",
+  "actId": "act-8",
+  "order": 47,
+  "title": "Wire Transfer API",
+  "difficulty": "hard",
+  "summary": "Move money between accounts and to external banks with authenticated, idempotent ledger transactions and asynchronous bank legs.",
+  "narrative": "Expose POST /transfers {fromAccountId, toAccount, amount, currency, idempotencyKey} to move money between accounts we hold and to external banks; toAccount is either an internal account id or a bank plus account number. This is like Credit Card Processing (level 46), but the other side is the banks instead of a card provider: the Third-Party API here plays the bank network. Every money movement needs strong authentication and authorisation, so the API Gateway checks each request with the Auth Service: who the caller is and whether they may move money from that account. Plan for ~1 M transfers/day ≈ 12/s with payday peaks ~500/s, and for a large merchant account that can receive ~1 K credits/s.\n\nThe Web Server records the transfer in one ACID transaction in SQL: check the idempotency key (a retry returns the original transfer), lock the sender's account row (or run a conditional update WHERE balance >= amount), write a PENDING transfer row and ledger entries that place the funds on hold. Concurrent transfers from the same account serialise on that row, so they can't overspend the balance; when a transfer has to lock two account rows, lock them in a fixed order (by account id) to avoid deadlocks. Transfers to a busy business account must not contend on one hot balance row: credits are appended as ledger entries, which commute, and the balance is derived from the entries plus periodic snapshots, or the account is split across sub-accounts. Optionally screen each transfer for fraud and money laundering (AML) with the ML Model Server before committing.\n\nNever call the bank inside the API transaction. The same transaction writes an outbox event, which is published after commit to the Message Queue, partitioned by account id so each account's events are processed in order. Workers submit external legs to the bank network with the transfer id as the reference and, because delivery is at least once, check the bank's status for that reference before any resubmission. The bank's confirmation or rejection arrives later: confirmation moves the transfer to COMPLETED and settles the hold; rejection marks it FAILED and writes a compensating reversal entry that returns the funds. Messages that keep failing land in a Dead Letter Queue for manual review, and Monitoring can track stuck PENDING transfers and bank errors.",
+  "objectives": ["Authenticated money movement", "Serialised account debits", "Hot-account credits", "Asynchronous bank legs"],
+  "specs": {
+    "functional": [
+      "Accept POST /transfers with fromAccountId, toAccount (internal id or bank + account number), amount, currency and idempotencyKey",
+      "Authenticate and authorise every money movement through the API Gateway and Auth Service",
+      "In one ACID transaction, check the idempotency key, lock or conditionally debit the sender, and write a PENDING transfer, hold ledger entries and an outbox event",
+      "Publish transfer events partitioned by account id; Workers submit external legs to the bank network",
+      "Move transfers to COMPLETED on bank confirmation, or to FAILED with a compensating reversal entry"
+    ],
+    "nonFunctional": [
+      "~1 M transfers/day ≈ 12/s; payday peaks ~500/s; a large merchant account receives ~1 K credits/s",
+      "Never overdraw an account or apply a retried request twice",
+      "Avoid hot-row contention on busy receiving accounts and deadlocks between concurrent transfers",
+      "Survive a Web Server or Worker failure without losing a transfer"
+    ],
+    "constraints": [
+      "Never call the bank inside the API request; enqueue the external leg after the ledger commit",
+      "Clients must never access the SQL Database directly",
+      "Lock two account rows in a fixed order (by account id); append credits instead of updating one hot balance row",
+      "Process each account's events in order; make Workers idempotent and check bank status before resubmitting"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 280,
+    "capacity": [
+      "~1 M transfers/day ≈ 12/s average; payday peaks ~500/s",
+      "A large merchant account: ~1 K credits/s → appended ledger entries plus periodic balance snapshots",
+      "One ACID transaction per transfer; external legs settle asynchronously"
+    ],
+    "tradeoff": "Locking the sender row gives simple, correct debits at the cost of serialising transfers from one account; appending credits avoids a hot receiving row but makes the balance a derived read from entries plus snapshots. Asynchronous bank legs keep the API fast and independent of bank outages, but transfers stay PENDING until the bank answers and failures need compensating entries instead of rollbacks.",
+    "bonus": "Connect Web Server → ML Model Server for fraud and AML screening, and add Monitoring for stuck transfers and bank errors."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "api-gateway", "label": "Send transfers through the API Gateway" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "api-gateway", "toComponentId": "auth-service", "label": "Authenticate and authorise every money movement" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "api-gateway", "toComponentId": "web-server", "label": "Route requests to the transfer API" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Commit accounts, ledger, transfers and idempotency keys" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish transfer events partitioned by account" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch bank submissions to Workers" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "external-api", "label": "Submit external legs to the bank network" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Record bank results and reversals" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park failing submissions for manual review" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "ml-model-server", "label": "Screen transfers for fraud and AML", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for stuck transfers", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "external-api",
+      "message": "Never call the bank inside the API request — enqueue after the ledger commit."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients read accounts and move money through the transfer API, never directly from the SQL Database."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so the transfer API survives one instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so bank submissions continue after one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "Connect the transfer event queue to a Dead Letter Queue for submissions that keep failing."
+    }
+  ],
+  "recommendedComponentIds": ["client", "api-gateway", "auth-service", "web-server", "sql-database", "message-queue", "worker", "external-api", "dead-letter-queue", "ml-model-server", "monitoring"],
+  "hints": [
+    "Start with Client → API Gateway, then API Gateway → Auth Service and API Gateway → Web Server. Connect Web Server → SQL Database and do the idempotency check, sender debit, hold and transfer row in one transaction.",
+    "Lock the sender row (two rows in account-id order) and append credits as ledger entries. After commit, publish Web Server → Message Queue → Worker; Worker → Third-Party API submits to the bank and Worker → SQL Database records the result or reversal.",
+    "Run two Web Servers and two Workers. Each Web Server reaches SQL, the queue, ML Model Server and Monitoring; the queue feeds both Workers and a Dead Letter Queue, and each Worker reaches the Third-Party API and SQL."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-and-implement-a-wire-transfer-api",
+  "tips": [
+    "Similar to the Credit Card Processing question, but with wire transfer. Assume that you are interacting with the banks instead of with the credit card provider.",
+    "How will you handle concurrent transactions to the same account? Or from the same account?",
+    "How about scale, say the payment was to a business where there can be many payments simultaneously?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode Discussion (Google phone screen)",
+      "url": "https://leetcode.com/discuss/interview-question/1895724/google-first-phone-write-a-wiretransfer-api",
+      "kind": "discussion"
+    },
+    {
+      "title": "Revolut backend interview discussion",
+      "url": "https://leetcode.com/discuss/post/651695/revolut-backend-engineer-london-sep-2019-ybf3/",
+      "kind": "discussion"
+    },
+    {
+      "title": "Video Solution",
+      "url": "https://www.youtube.com/watch?v=olfaBgJrUBI&t=365s",
+      "kind": "video"
+    }
+  ]
+}

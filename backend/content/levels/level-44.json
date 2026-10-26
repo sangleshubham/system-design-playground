@@ -1,0 +1,115 @@
+{
+  "id": "level-44",
+  "actId": "act-8",
+  "order": 44,
+  "title": "6 Million Free Burgers",
+  "difficulty": "medium",
+  "summary": "Give away 6 M one-per-user burger vouchers in one hour with atomic in-memory claims and asynchronous durable records.",
+  "narrative": "A promotion gives away 6 M free burgers in one hour, at most one per signed-in user. Users claim in the app, receive a unique voucher code by email or push, and redeem it in a restaurant. The Client here is the promotion app; the CDN serves its static shell and, once the codes run out, a cached sold-out flag and page, so late arrivals stop calling the API. 6 M / 3,600 s ≈ 1,700 claims/s on average, but demand is front-loaded: ~50 M users may try in the first minutes, ≈ 100 K requests/s. At ~2 K requests/s per Web Server that is ~50 servers at the peak, autoscaled behind the Load Balancer, while one in-memory store node handles ~100 K simple atomic operations/s.\n\nPre-generate the 6 M unique codes into a list in the Cache, which plays the in-memory voucher store (Redis-style) rather than a cache of another database: the length of that list is the number of vouchers left. Each claim runs one atomic script. If the marker claimed:{userId} exists, it returns that user's code, so a repeated or retried claim is idempotent; otherwise it pops a code and sets claimed:{userId} to it. Because the check, the pop and the marker happen in one atomic step, the count drops exactly once per user, and a pop on an empty list returns nothing, so the count never goes below zero and the user is told the promotion is sold out. A Rate Limiter in front of the claim acts as the waiting room: it limits each user and admits only as many claims as the store can absorb, shedding the rest with a retry-later response.\n\nThe claim is acknowledged as soon as the script succeeds and its claim record is enqueued; the durable record follows asynchronously. Workers insert it into SQL with user_id as the primary key and the code unique, a second line of defence that rejects duplicates. Queue delivery is at least once, so inserts are idempotent and a redelivered record only re-sends the same code. Workers send the code through the Notification Service by email/push and retry failed sends with backoff; records that keep failing go to a Dead Letter Queue for inspection, and the app can always show the code again because a repeated claim returns it. The voucher store runs with a replica and append-only persistence. Replication is asynchronous, so the last claims acknowledged before a crash can be missing after failover: pause claims, let Workers drain the queue into SQL, then reconcile the promoted store from the durable claims (restore markers, drop issued codes) before reopening claims. Optionally add Monitoring for claim rate, codes left and queue lag.",
+  "objectives": ["Atomic one-per-user claims", "Pre-generated voucher codes", "Asynchronous durable records", "Peak load shedding"],
+  "specs": {
+    "functional": [
+      "Pre-generate 6 M unique voucher codes into a list in the in-memory voucher store; its length is the number left",
+      "Claim with one atomic script: return the code if claimed:{userId} exists, otherwise pop a code and set the marker",
+      "Shed excess claims with per-user limits and a waiting room; serve the sold-out page from the CDN once codes run out",
+      "Enqueue claim records for Workers to store in SQL with user_id as the primary key and the code unique",
+      "Send each code by email/push through the Notification Service, retrying failed sends with backoff"
+    ],
+    "nonFunctional": [
+      "Give away 6 M vouchers in one hour: ≈ 1,700 claims/s on average and ~100 K requests/s in the first minutes",
+      "Decrement the voucher count exactly once per user and never below zero",
+      "Survive a Web Server, Worker or voucher-store node failure; after failover, drain the queue and reconcile the store from durable claims before reopening",
+      "Acknowledge claims without waiting for the SQL write or the email/push send"
+    ],
+    "constraints": [
+      "Web Servers must never write SQL on the claim path; claim records reach SQL through the Message Queue and Workers",
+      "Web Servers must never call the Notification Service directly; Workers send codes after the claim is queued",
+      "Run the marker check, the pop and the marker write as one atomic operation, never as separate read-then-write calls",
+      "Replicate the voucher store with append-only persistence; the SQL unique keys catch any duplicate a failover lets through"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 220,
+    "capacity": [
+      "6 M vouchers / 3,600 s ≈ 1,700 claims/s average; ~50 M users in the first minutes ≈ 100 K requests/s",
+      "~2 K requests/s per Web Server → ~50 servers at the peak (autoscaled)",
+      "~100 K simple atomic operations/s per voucher-store node"
+    ],
+    "tradeoff": "Acknowledging from the in-memory store keeps claims fast at ~100 K requests/s, but an asynchronous replica can lose the last acknowledged claims in a failover; durable records and reconciliation repair that instead of a synchronous database write per claim. The waiting room protects the store at the cost of making some users wait or retry.",
+    "bonus": "Connect Message Queue → Dead Letter Queue for claim records and sends that keep failing, and add Monitoring for claim rate, codes left and queue lag."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Serve the app shell and sold-out page from the CDN" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route claims through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance claims across Web Servers" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "rate-limiter", "label": "Shed excess claims with a Rate Limiter" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Claim atomically: set a per-user marker and pop a code" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Enqueue claim records" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch claim records to Workers" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Store durable claims, unique per user" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Send the voucher code by email or push" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park claim records that keep failing", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for claim rate and codes left", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "sql-database",
+      "message": "Don't hit the database on the claim path at 100 K requests/s."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "notification-service",
+      "message": "Send voucher codes from Workers after the claim is queued, never from the claim request."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so claims continue after one instance fails."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so claim records and voucher sends keep flowing after one fails."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "cache",
+      "message": "Run the voucher store with a replica so a crash doesn't lose the inventory."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "load-balancer", "web-server", "rate-limiter", "cache", "message-queue", "worker", "sql-database", "notification-service", "dead-letter-queue", "monitoring"],
+  "hints": [
+    "Start with Client → CDN for the app shell and sold-out page, and Client → Load Balancer → Web Server for claims. Connect Web Server → Rate Limiter to shed load and → Cache, which holds the list of pre-generated codes.",
+    "Make the claim one atomic script in the Cache: return the code if claimed:{userId} exists, otherwise pop a code and set the marker. Then wire Web Server → Message Queue → Worker, with Worker → SQL Database (user_id primary key) and Worker → Notification Service.",
+    "Run two Web Servers, two Cache nodes (primary and replica) and two Workers. Each Web Server reaches the Rate Limiter, both Cache nodes, the queue and Monitoring; the queue feeds both Workers and a Dead Letter Queue, and each Worker writes SQL and calls the Notification Service."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-backend-to-distribute-6-million-burgers-in-one-hour",
+  "tips": [
+    "How is the food delivered? Email notification?",
+    "How do you store the number of vouchers left?",
+    "How do you ensure that the number of vouchers is reduced exactly once per user?",
+    "How do you do this within the deadline - calculate rate of processing needed and machines needed for that.",
+    "What if something fails, how do you handle that?"
+  ],
+  "resources": [
+    {
+      "title": "Mock Interview",
+      "url": "https://interviewing.io/mocks/google-system-design-design-a-free-food-app",
+      "kind": "video"
+    },
+    {
+      "title": "Another Mock Interview",
+      "url": "https://interviewing.io/questions/design-a-free-food-app",
+      "kind": "video"
+    },
+    {
+      "title": "Reddit discussion",
+      "url": "https://www.reddit.com/r/softwarearchitecture/comments/xlztzr/interview_systems_design_question_that_i_want/",
+      "kind": "discussion"
+    }
+  ]
+}

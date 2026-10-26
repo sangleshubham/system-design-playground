@@ -1,0 +1,124 @@
+{
+  "id": "level-45",
+  "actId": "act-8",
+  "order": 45,
+  "title": "Hotel Booking",
+  "difficulty": "medium",
+  "summary": "Search hotels, hold rooms during checkout and reserve per-night inventory in one transaction so the last room is never double-booked.",
+  "narrative": "Guests search hotels by city and dates, see room types with prices and availability, reserve, pay and cancel. This question is more about product design than raw scale: list the features first, then design the database and APIs around them. Using ByteByteGo's sizing, 5,000 hotels with 1 M rooms at ~70 % occupancy and ~3-night stays give ~240 K reservations/day ≈ 3 reservations/s, with searches ~100× that (≈ 300/s). The API: GET /hotels?city&checkIn&checkOut, GET /hotels/{id}/rooms?checkIn&checkOut, POST /reservations (creates a HOLD), POST /reservations/{id}/payment and DELETE /reservations/{id}.\n\nUse a relational SQL database: ACID transactions and constraints matter more than raw scale here, and one inventory row per room type per night (≈ 5,000 hotels × ~20 room types × 2 years ≈ 73 M rows) fits comfortably. Tables: hotel, room_type, room_type_inventory(hotel_id, room_type_id, date, total, reserved) and reservation(id, guest_id, hotel_id, room_type_id, check_in, check_out, status HOLD|CONFIRMED|CANCELLED|EXPIRED, hold_expires_at, idempotency_key). A room type is available for a stay when every night in [check_in, check_out) has total - reserved ≥ the rooms requested. Reserving a room is one transaction that, for each night, runs UPDATE … SET reserved = reserved + 1 WHERE … AND reserved < total and rolls back if any night updates no row (optimistic locking with a version column works too), so two simultaneous bookings of the last room can't both succeed. POST /reservations takes an idempotency key, unique on the reservation row, so a retried click returns the existing reservation instead of booking twice.\n\nWhile a guest is checking out, the reservation is a HOLD that already counts in reserved and expires after ~10 min, so nobody else can take that room. The Web Server initiates payment with the Payment Service against the reservation, using the reservation id as the payment's idempotency key, and payment success moves HOLD → CONFIRMED. A Task Scheduler triggers an expiry job on a Worker that moves unpaid holds past hold_expires_at to EXPIRED and releases their nights in the same transaction. Confirmation and expiry both update the reservation only WHERE status = 'HOLD', so exactly one of them wins; a payment that loses to expiry is refunded. Cancellation also releases the nights. Hotel search runs on a Search Index and hotel details and rates are cached, but availability is always checked against the database. Optionally the Worker sends confirmation and hold-expiry emails through the Notification Service, and Monitoring tracks failed reservations and expiring holds.",
+  "objectives": ["Features before schema", "Atomic per-night inventory", "Expiring checkout holds", "Idempotent reservations"],
+  "specs": {
+    "functional": [
+      "Search hotels by city and dates through the Search Index; serve hotel details and rates from Cache",
+      "Check availability in SQL: every night of the stay needs total - reserved ≥ the rooms requested",
+      "Reserve in one transaction of conditional per-night updates with an idempotency key, creating a ~10 min HOLD",
+      "Pay against the reservation through the Payment Service and confirm the HOLD; cancel to release the nights",
+      "Run a scheduled expiry job on Workers that marks unpaid holds EXPIRED and releases their nights"
+    ],
+    "nonFunctional": [
+      "5,000 hotels and 1 M rooms; ~240 K reservations/day ≈ 3/s; searches ~100× ≈ 300/s",
+      "Never double-book the last room under concurrent reservations or retried clicks",
+      "Keep search and hotel details fast without serving stale availability",
+      "Survive a Web Server failure"
+    ],
+    "constraints": [
+      "Clients must never query the SQL Database directly; all reads and writes go through the booking API",
+      "Payments are initiated by the backend against a reservation; Client-to-Payment Service paths pass through Web Servers",
+      "Check availability and reserve against SQL, never from the Search Index or Cache",
+      "Make payment confirmation and hold expiry conditional on status HOLD so only one of them wins"
+    ],
+    "budgetPerHr": 5.0,
+    "latencyTargetMs": 320,
+    "capacity": [
+      "5,000 hotels; 1 M rooms; ~70 % occupancy; ~3-night stays",
+      "~240 K reservations/day ≈ 3 reservations/s; ~300 searches/s",
+      "≈ 73 M inventory rows (5,000 hotels × ~20 room types × 2 years); holds expire after ~10 min"
+    ],
+    "tradeoff": "Conditional updates inside one relational transaction rule out double-booking, and at a few reservations per second contention is low; optimistic version checks avoid locks but force retries on popular dates. Holds protect a guest during checkout but keep rooms off the market for ~10 min when checkout is abandoned, and a payment that loses to expiry must be refunded.",
+    "bonus": "Connect Worker → Notification Service for confirmation and hold-expiry emails, and add Monitoring for failed reservations and expiring holds."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route guest requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance booking API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Search hotels by city" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Reserve inventory and write the reservation in one transaction" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache hotel details and rates" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "payment-service", "label": "Charge against the reservation" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Schedule hold expiry" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "worker", "label": "Run the expiry job on a Worker" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Release expired holds" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Email confirmations and hold expiries", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for bookings and holds", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Guests check availability and reserve through the booking API, never directly from the SQL Database."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "payment-service",
+      "message": "Payments are initiated by the backend against a reservation."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so search and booking survive one instance failure."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "worker",
+      "message": "Connect the Task Scheduler to a Worker that releases expired holds."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "search-index", "sql-database", "cache", "payment-service", "task-scheduler", "worker", "notification-service", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → Search Index for hotel search, → Cache for hotel details and rates, and → SQL Database for inventory and reservations.",
+    "Reserve with one transaction of conditional per-night updates (reserved < total) plus an idempotency key, creating a ~10 min HOLD. Connect Web Server → Payment Service to pay against it, and Web Server → Task Scheduler → Worker → SQL Database to release expired holds.",
+    "Run two Web Servers; each reaches the Search Index, SQL, Cache, Payment Service, Task Scheduler and Monitoring. Wire Task Scheduler → Worker → SQL Database, and Worker → Notification Service for confirmation emails."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-hotel-booking-system",
+  "tips": [
+    "This is more high level than most distributed systems questions.",
+    "Database design - first come up with the features and then design the DB.",
+    "Which DB will you use, and why?",
+    "API Design for the different functionalities.",
+    "How do you query for room availability?",
+    "If two people reserve a room at the same time, how will you handle that?",
+    "While a person is checking out a room, how do you prevent others from booking the room?"
+  ],
+  "resources": [
+    {
+      "title": "Solution from FAANG Engineer",
+      "url": "https://www.youtube.com/watch?v=Ale7Fn921GQ",
+      "kind": "video"
+    },
+    {
+      "title": "Hotel reservation (ByteByteGo)",
+      "url": "https://bytebytego.com/courses/system-design-interview/hotel-reservation-system",
+      "kind": "course"
+    },
+    {
+      "title": "Good API and High Level Design",
+      "url": "https://javascript.plainenglish.io/how-to-design-a-hotel-booking-system-56ef18b6adfc",
+      "kind": "article"
+    },
+    {
+      "title": "High Level Backend Design Video",
+      "url": "https://www.youtube.com/watch?v=m67Mjbx6DMY",
+      "kind": "video"
+    },
+    {
+      "title": "Mock Interview",
+      "url": "https://www.tryexponent.com/blog/design-a-hotel-booking-service-system-design-interview-question-answer",
+      "kind": "article"
+    }
+  ]
+}

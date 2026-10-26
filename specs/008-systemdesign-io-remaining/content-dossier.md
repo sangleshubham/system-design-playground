@@ -916,8 +916,9 @@ smoothed (EWMA) with hysteresis and caps so prices don't oscillate; results are 
 a per-cell multiplier map in the cache with an expiry. **Integration** — surge is computed
 off the request path: the quote API only reads the multiplier for the pickup cell,
 returns a fare and stores a **locked quote** (price, multiplier, expiry ~2 min) so the
-rider pays what they saw; dispatch is unchanged. Every multiplier change is kept for
-audit, analytics and regulators; driver apps show a heatmap from the same map.
+rider pays what they saw; dispatch is unchanged. For audit, each locked quote records the
+multiplier version it used, and the retained demand/supply event log plus the versioned
+model make every multiplier reproducible; driver apps show a heatmap from the same map.
 Numbers: ~500 K active cells; inputs ≈ 1.25 M driver pings/s + ~50 K quote events/s;
 multipliers recomputed every 60 s per cell; quote reads ~50 K/s, p99 < 50 ms.
 
@@ -1176,8 +1177,8 @@ we never talk to card networks directly. Correctness points:
   our API asynchronously); both paths apply the same idempotent conditional state update.
   Timeouts/unknown results are resolved by querying the PSP, never by blindly retrying a
   new charge.
-- On success, a double-entry ledger records the movement (debit customer receivable,
-  credit merchant payable) in the same transaction as the state change, and a
+- On success, a double-entry ledger records the movement (debit a receivable from the PSP,
+  credit a payable to the merchant) in the same transaction as the state change, and a
   payment-succeeded event (transactional outbox) triggers downstream work (wallet,
   receipts) via the queue; failures are recorded with the decline reason; retryable
   errors use exponential backoff and finally a DLQ for manual review.

@@ -1,0 +1,123 @@
+{
+  "id": "level-46",
+  "actId": "act-8",
+  "order": 46,
+  "title": "Credit Card Processing",
+  "difficulty": "expert",
+  "summary": "Charge cards through a payment provider with tokenisation, idempotency keys, webhooks, a double-entry ledger and an outbox.",
+  "narrative": "Build the payment system of an e-commerce platform. We use a payment service provider (PSP) such as Stripe or Adyen, played here by the Payment Service, and never talk to card networks directly. The Client is the shopper's checkout page or app: it tokenises the card with the PSP's SDK, sending card details straight to the PSP, so raw card numbers never touch our servers and we stay out of most PCI scope; only the token reaches POST /payments through the API Gateway. Plan for ~1 M payments/day ≈ 12 TPS on average and Black Friday peaks ~100× ≈ 1–2 K TPS, while each PSP call takes ~1–3 s. For global payments, route by currency and region to the right PSP or acquirer, store amounts as integer minor units with their currency, and convert at a quoted FX rate.\n\nPOST /payments requires an idempotency key. The Web Server applies per-merchant limits with the Rate Limiter and gets a fraud score from the ML Model Server before the charge, declining or reviewing risky payments. It writes the payment row in SQL (state PENDING, unique idempotency key) before calling the PSP, and passes the same key to the PSP, which deduplicates a retried request instead of charging twice. Success is marked from the PSP's synchronous response or from its webhook, which the PSP sends asynchronously to the API Gateway with a signature we verify. Both paths apply the same idempotent conditional update, PENDING → SUCCEEDED or FAILED only while the row is still PENDING, so whichever arrives second is a no-op. In that same transaction a success writes balanced double-entry ledger lines (debit a receivable from the PSP, credit a payable to the merchant) and a payment-succeeded event into an outbox table; a failure is recorded with the decline reason. A timeout or unknown result stays PENDING with a status-check event in the outbox, and a Worker resolves it by querying the PSP for that payment's status, never by blindly retrying a new charge.\n\nAn outbox relay publishes the events to the Message Queue after commit. Delivery is at least once, so Workers handle each event idempotently by event id: they update the wallet, send receipts and run status checks against the PSP for timed-out payments. Retryable errors back off exponentially, and messages that keep failing land in a Dead Letter Queue for manual review. Bursts are absorbed by scaling the stateless services out, sharding the database by merchant or payment id, per-merchant rate limits that protect the downstream PSPs, and moving post-processing onto the queue. Nightly reconciliation compares the ledger with the PSP's settlement files; optionally Workers load both into a Data Warehouse for reconciliation and reporting, and Monitoring tracks decline rates, PSP latency and stuck PENDING payments.",
+  "objectives": ["Card tokenisation", "Idempotent payment state", "Webhooks & double-entry ledger", "Bursts & reconciliation"],
+  "specs": {
+    "functional": [
+      "Tokenise cards in the browser or app with the PSP's SDK and accept only the token in POST /payments",
+      "Require an idempotency key; write the PENDING payment row before calling the PSP and pass the same key to it",
+      "Apply per-merchant rate limits and score fraud with the ML Model Server before the charge",
+      "Mark success or failure from the synchronous response or the PSP webhook with one idempotent conditional update that also writes double-entry ledger lines and an outbox event",
+      "Process payment events with Workers for wallet updates, receipts and PSP status checks on timed-out payments; retry with exponential backoff, then a Dead Letter Queue"
+    ],
+    "nonFunctional": [
+      "~1 M payments/day ≈ 12 TPS average; Black Friday peaks ~100× ≈ 1–2 K TPS; PSP calls take ~1–3 s",
+      "Never charge twice: retries reuse the idempotency key and unknown results are resolved by a status query",
+      "Keep raw card numbers off our servers to stay out of most PCI scope",
+      "Survive a Web Server or Worker failure without losing payment events",
+      "Support global payments: route by currency and region, store integer minor units with currency, convert at a quoted FX rate"
+    ],
+    "constraints": [
+      "Clients must never access the SQL Database or the ML Model Server directly",
+      "Write the payment row before calling the PSP; resolve timeouts by querying the PSP, never by issuing a new charge",
+      "Write ledger entries and the outbox event in the same transaction as the payment state change",
+      "Verify webhook signatures and make every webhook and queue consumer idempotent"
+    ],
+    "budgetPerHr": 7.5,
+    "latencyTargetMs": 620,
+    "capacity": [
+      "~1 M payments/day ≈ 12 TPS; Black Friday ≈ 100× ≈ 1–2 K TPS",
+      "PSP calls ~1–3 s → ~1–6 K charges in flight at the peak",
+      "Database sharded by merchant or payment id; nightly reconciliation against PSP settlement files"
+    ],
+    "tradeoff": "Writing state before the PSP call and resolving unknown results by query costs latency and extra calls but prevents double charges. Accepting both synchronous responses and webhooks makes completion fast and reliable but requires idempotent, order-tolerant updates. The outbox and queue decouple post-processing from the charge, so receipts and wallet updates lag the payment by seconds.",
+    "bonus": "Connect Worker → Data Warehouse for reconciliation and reporting, and add Monitoring for declines, PSP latency and stuck payments."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "payment-service", "label": "Tokenise the card with the PSP's SDK" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "api-gateway", "label": "Send the payment token to the API Gateway" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "api-gateway", "toComponentId": "web-server", "label": "Route payment API calls to Web Servers" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "rate-limiter", "label": "Enforce per-merchant rate limits" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "ml-model-server", "label": "Score fraud before the charge" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store payment state, idempotency keys and the ledger" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "payment-service", "label": "Charge with the idempotency key" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "payment-service", "toComponentId": "api-gateway", "label": "Receive PSP webhooks" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish payment events through the outbox" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Process wallet updates, receipts and status checks" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Apply follow-up updates idempotently" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "worker", "toComponentId": "payment-service", "label": "Query the status of timed-out payments" },
+    { "id": "m13", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park failing events for manual review" },
+    { "id": "m14", "kind": "connect", "fromComponentId": "worker", "toComponentId": "data-warehouse", "label": "Load reconciliation and reporting data", "bonus": true },
+    { "id": "m15", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for payment health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients get payment state through the payment API, never directly from the SQL Database."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "ml-model-server",
+      "message": "Fraud scores come from the backend, never directly from the ML Model Server, so a client can't skip or forge them."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so checkout survives one instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so receipts, wallet updates and status checks keep flowing after one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "Connect the payment event queue to a Dead Letter Queue for events that keep failing."
+    }
+  ],
+  "recommendedComponentIds": ["client", "payment-service", "api-gateway", "web-server", "rate-limiter", "ml-model-server", "sql-database", "message-queue", "worker", "dead-letter-queue", "data-warehouse", "monitoring"],
+  "hints": [
+    "Connect Client → Payment Service to tokenise the card, and Client → API Gateway → Web Server for POST /payments. Wire Web Server → Rate Limiter, → ML Model Server for the fraud score and → SQL Database for payment state.",
+    "Write the PENDING row first, then call Web Server → Payment Service with the same idempotency key, and connect Payment Service → API Gateway for webhooks. Publish outbox events Web Server → Message Queue → Worker, with Worker → SQL and Worker → Payment Service for status checks.",
+    "Run two Web Servers and two Workers. Each Web Server reaches the Rate Limiter, ML Model Server, SQL, Payment Service, the queue and Monitoring; the queue feeds both Workers and a Dead Letter Queue, and each Worker reaches SQL, Payment Service and the Data Warehouse."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-credit-card-processing-system",
+  "tips": [
+    "To clarify: what level are we implementing. For e.g, are we using Stripe?",
+    "How will you handle the case where the payment is successful, how will you mark the payment as completed?",
+    "How will you handle payment failures?",
+    "How do you ensure that a payment doesn't get processed twice?",
+    "How do we handle global payments?",
+    "How do you conduct a large number of transactions?",
+    "How do you handle a burst of payments?"
+  ],
+  "resources": [
+    {
+      "title": "Detailed solution",
+      "url": "https://newsletter.pragmaticengineer.com/p/designing-a-payment-system",
+      "kind": "article"
+    },
+    {
+      "title": "Simpler solution",
+      "url": "https://hackernoon.com/system-design-interview-designing-payment-systems-follow-up-questions-and-probable-issues",
+      "kind": "article"
+    },
+    {
+      "title": "Good video explanation",
+      "url": "https://www.youtube.com/watch?v=olfaBgJrUBI",
+      "kind": "video"
+    }
+  ]
+}

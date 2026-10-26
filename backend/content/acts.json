@@ -40,5 +40,11 @@
     "order": 7,
     "title": "Rides, Ranking & Experiments",
     "description": "Location indexes, ETAs, dynamic prices, experiments and ad auctions driven by streams and models."
+  },
+  {
+    "id": "act-8",
+    "order": 8,
+    "title": "Money & Flash Sales",
+    "description": "Exactly-once inventory and payments: free-food vouchers, room bookings, card charges and wire transfers."
   }
 ]
