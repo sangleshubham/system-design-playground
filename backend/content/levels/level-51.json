@@ -1,0 +1,120 @@
+{
+  "id": "level-51",
+  "actId": "act-9",
+  "order": 51,
+  "title": "Bot Fleet Coordinator",
+  "difficulty": "hard",
+  "summary": "Coordinate 10 K machines you operate through one job with a replicated coordinator, a pull-based task queue, heartbeat sessions and idempotent, re-queueable tasks.",
+  "narrative": "Coordinate a fleet of machines you own and operate — the interview's \"bots\", like the variant where bots download a large set of files — so that together they finish one job and you can track it. The Client here is the operator's console, which submits the job and watches its progress. Plan for 10 K bots and a job of 10 M tasks of ~1 s each: ≈ 10 M task-seconds, or about 1,000 s (~17 min) of fleet time with every bot busy. Bots heartbeat every 5 s, ≈ 2 K heartbeats/s, and a bot is declared dead after ~3 missed heartbeats (~15 s). This is MapReduce's master/worker template: a coordinator that splits and tracks the work, and workers that pull and run it.\n\nThe coordinator runs on the Web Servers behind the Load Balancer. It splits the submitted job into tasks, records them in the SQL Database (task, state, assigned bot, attempt) and publishes them to a Message Queue that acts as the task queue. The bots — the Workers — pull tasks rather than having them pushed, which scales to thousands of machines and works behind NAT. Each bot reports to the coordinator when it takes a task, runs it, writes the output to Blob Storage and reports completion; the coordinator marks the task done in SQL and decrements the job's counter of remaining tasks, also kept in SQL and updated in batches so one row doesn't become a hotspot. The job is complete when that counter reaches zero, that is, when every task is marked done.\n\nFor liveness, each bot holds a session in ZooKeeper / etcd (an ephemeral node or a lease with a TTL) kept alive by its heartbeats. When ~3 heartbeats are missed the session expires, the coordinator is notified through its watch on the membership, and it re-queues that bot's in-flight tasks found in SQL. Tasks are idempotent — each writes its output under a deterministic name, so a re-run overwrites instead of duplicating — which makes a re-queued run safe even if the slow bot finishes after all. Near the end of the job, stragglers get speculative backup copies on idle bots, and the first copy to finish wins. The coordinator itself is replicated: the Web Servers elect a leader through ZooKeeper / etcd, a standby takes over if the leader dies, and job state survives because it lives in SQL rather than in the coordinator's memory. ZooKeeper / etcd runs as a quorum ensemble, typically three or five nodes, so membership survives a node failure. Optionally tell the operator through the Notification Service when the job completes or fails, and add Monitoring for fleet health and job progress.",
+  "objectives": ["Pull-based task queue", "Heartbeats & sessions", "Re-queue & speculative backups", "Replicated coordinator"],
+  "specs": {
+    "functional": [
+      "Submit a job; split it into tasks, record them in SQL (task, state, assigned bot, attempt) and publish them to a task queue",
+      "Let bots pull tasks, run them, write outputs to Blob Storage and report completion to the coordinator",
+      "Track bot membership with heartbeat-kept sessions in ZooKeeper / etcd; when a session expires, re-queue that bot's in-flight tasks",
+      "Launch speculative backup copies of straggling tasks near the end of the job",
+      "Mark the job complete when every task is done — the counter of remaining tasks reaches zero"
+    ],
+    "nonFunctional": [
+      "10 K bots; a job of 10 M tasks of ~1 s each ≈ 1,000 s of fleet time",
+      "Heartbeats every 5 s ≈ 2 K/s; declare a bot dead after ~3 missed heartbeats (~15 s)",
+      "Survive a coordinator, bot or coordination-node failure without losing job state"
+    ],
+    "constraints": [
+      "The operator talks only to the coordinator API, never directly to the bots or the task queue",
+      "Bots pull tasks; the coordinator never needs to open a connection into a bot",
+      "Make every task idempotent so re-queued and speculative copies are safe",
+      "Keep job and task state in SQL, not in coordinator memory, so a standby can take over"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 250,
+    "capacity": [
+      "10 K bots × ~1 task/s ≈ 10 K task completions/s",
+      "10 M tasks × ~1 s / 10 K bots ≈ 1,000 s (~17 min)",
+      "10 K bots / 5 s heartbeats ≈ 2 K heartbeats/s; a bot is declared dead after ~15 s"
+    ],
+    "tradeoff": "A short heartbeat timeout finds dead bots quickly but risks declaring a slow bot dead and running its tasks twice; idempotent tasks make that safe. Pulling tasks scales and works behind NAT but makes bots poll for work, and speculative backups cut the tail of the job at the cost of some duplicated work.",
+    "bonus": "Connect Web Server → Notification Service to tell the operator when the job completes or fails, and add Monitoring for fleet health and job progress."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Submit jobs through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Route to the coordinator" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Record jobs, tasks and assignments" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Publish tasks to the task queue" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let bots pull tasks" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "zookeeper-etcd", "label": "Register bots and send heartbeats" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "zookeeper-etcd", "label": "Elect a leader and watch for dead bots" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Write task outputs" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "web-server", "label": "Report task completion" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "notification-service", "label": "Tell the operator when the job completes or fails", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for fleet health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "worker",
+      "message": "The operator talks to the coordinator, never directly to the bots."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "message-queue",
+      "message": "Tasks enter the queue through the coordinator, never directly from the Client."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run a standby coordinator — at least two Web Servers — so a coordinator failure doesn't stop the job."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two bots so the job continues when one dies."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "zookeeper-etcd",
+      "message": "Run a quorum ensemble of ZooKeeper / etcd nodes so membership survives a node failure."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "message-queue", "worker", "zookeeper-etcd", "blob-storage", "notification-service", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server, the coordinator. Connect Web Server → SQL Database for jobs and tasks, and Web Server → Message Queue for the task queue.",
+    "Wire Message Queue → Worker so bots pull tasks. Connect Worker → Blob Storage for outputs, Worker → Web Server to report completion and Worker → ZooKeeper / etcd for heartbeats, plus Web Server → ZooKeeper / etcd for leader election and watches.",
+    "Run two Web Servers, two Workers and two ZooKeeper / etcd nodes (a real ensemble uses three or five). Each Web Server reaches SQL, the queue, both coordination nodes, the Notification Service and Monitoring; each Worker reaches both coordination nodes, Blob Storage and both Web Servers."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-distributed-botnet",
+  "tips": [
+    "It is essentially the same as coordinating a bunch of machines towards doing a particular task, and tracking it.",
+    "You can take the MapReduce template - master-workers, heartbeats for tracking tasks, etc.",
+    "How will you send a task to the cluster of computers?",
+    "How will you keep track of each computer's task?",
+    "What will you do if a computer fails? How will you get notified?",
+    "How will you know when all the computers have completed the task?"
+  ],
+  "resources": [
+    {
+      "title": "MapReduce Paper - which coordinates a cluster of machines to do a task",
+      "url": "https://static.googleusercontent.com/media/research.google.com/en//archive/mapreduce-osdi04.pdf",
+      "kind": "paper"
+    },
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/post/1375361/botnet-system-designfacebook-design-roun-jv0g/",
+      "kind": "discussion"
+    },
+    {
+      "title": "Lyft: design bots to download files (discussion)",
+      "url": "https://leetcode.com/discuss/post/850071/lyft-virtual-onsite-design-bots-to-downl-4v5q/",
+      "kind": "discussion"
+    },
+    {
+      "title": "Blind",
+      "url": "https://www.teamblind.com/post/System-design-for-Botnet-5x0Mq34z",
+      "kind": "discussion"
+    }
+  ]
+}

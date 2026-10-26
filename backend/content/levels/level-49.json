@@ -1,0 +1,123 @@
+{
+  "id": "level-49",
+  "actId": "act-9",
+  "order": 49,
+  "title": "Top-K Bestsellers",
+  "difficulty": "easy",
+  "summary": "Rank the top 100 items per category and region with a fast approximate stream path and an exact scheduled batch recount.",
+  "narrative": "Build rankings like \"Top 100 free apps\" or \"Amazon bestsellers in Books\": the top K = 100 items per category and region, for the last hour and the last day. The Client here is the store's app and web pages, which send purchase and download events and read the rankings. Expect ~1 B purchase/download events/day ≈ 12 K/s on average and 50 K/s at peak, over ~10 M items, ~50 categories and ~100 regions — about 5,000 category-region lists for each window. Unlike the Top-K Shared Articles level, which is about sliding windows over article shares, the real question here is precision versus freshness: is the ranking computed in real time or by a scheduled job? The answer is both.\n\nWeb Servers append every event to a Message Queue. On the fast path, redundant Stream Processors, partitioned by category and region, keep a count-min sketch plus a min-heap of size K per category, region and window. The sketch is a small grid of counters — a few hash functions, each with its own row — so it estimates counts for ~10 M items in megabytes instead of one counter per item; each event increments one counter per row and an item's estimate is the minimum across its rows. Collisions only ever add to a counter, so an estimate can be too high but never too low. An item already in the heap has its count updated; any other item whose estimate beats the smallest entry in the heap replaces that entry. Within about a minute the Stream Processors write these approximate top-K lists to the Cache.\n\nOn the slow path, the Message Queue also lands every raw event in Blob Storage. The Web Server registers the ranking definitions — category × region × window — with the Task Scheduler, which runs a Batch Processor job (MapReduce) after each completed hour and day: it reads that period's raw events from Blob Storage, computes exact counts and the exact top-K, stores the exact rankings in the NoSQL Database and replaces the approximate list in the Cache. Reads always come from these precomputed lists: Web Servers read rankings from the Cache and never compute them per request, and on a miss the Cache loads the last exact list from the NoSQL Database. So the current hour shows a fresh but approximate list within about a minute, and every completed hour or day is replaced by an exact one. Optionally add Monitoring for queue lag and ranking freshness.",
+  "objectives": ["Count-min sketch + heap", "Fast approximate path", "Exact batch recount", "Precomputed ranking reads"],
+  "specs": {
+    "functional": [
+      "Ingest purchase and download events through Web Servers into a Message Queue",
+      "Keep a count-min sketch plus a size-K min-heap per category, region and window in Stream Processors and publish approximate top-K lists to the Cache within about a minute",
+      "Archive raw events in Blob Storage and recount each completed hour and day exactly with a scheduled Batch Processor job",
+      "Store exact rankings in the NoSQL Database and replace the approximate list in the Cache",
+      "Serve rankings per category, region and window from precomputed lists in the Cache"
+    ],
+    "nonFunctional": [
+      "~1 B events/day ≈ 12 K/s on average and 50 K/s at peak",
+      "Approximate rankings fresh within about a minute; exact rankings for every completed hour and day",
+      "Survive a Web Server or Stream Processor failure"
+    ],
+    "constraints": [
+      "Clients read rankings through the API, never directly from the Cache",
+      "Every Web Server path to Stream Processors must pass through the Message Queue",
+      "Never compute a ranking on the read path; serve precomputed lists only",
+      "Treat fast-path counts as estimates: a count-min sketch can overestimate an item's count but never underestimate it"
+    ],
+    "budgetPerHr": 6.5,
+    "latencyTargetMs": 460,
+    "capacity": [
+      "~1 B events/day ≈ 12 K/s; 50 K/s at peak",
+      "~10 M items; ~50 categories × ~100 regions ≈ 5,000 lists per window",
+      "K = 100 → 5,000 lists × 2 windows × 100 entries ≈ 1 M ranking entries"
+    ],
+    "tradeoff": "The fast path answers within a minute with little memory, but a count-min sketch can overestimate items whose counters collide with popular ones, so the list may be slightly wrong; the slow path is exact but only after the hour or day closes. Running both costs two pipelines and the storage for raw events, in exchange for fresh rankings now and exact ones later.",
+    "bonus": "Connect Cache → NoSQL Database so a miss falls back to the last exact list, and add Monitoring for queue lag and ranking freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route events and ranking reads through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance traffic across Web Servers" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append purchase and download events" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Count events with a count-min sketch and a heap" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Publish approximate top-K lists" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "blob-storage", "label": "Archive raw events" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Register ranking definitions" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "batch-processor", "label": "Schedule hourly and daily exact recounts" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "blob-storage", "label": "Read raw events for the recount" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "nosql-database", "label": "Store exact rankings" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "cache", "label": "Replace the approximate list with the exact one" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read precomputed rankings" },
+    { "id": "m13", "kind": "connect", "fromComponentId": "cache", "toComponentId": "nosql-database", "label": "Fall back to the last exact list on a miss", "bonus": true },
+    { "id": "m14", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for queue lag and freshness", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "cache",
+      "message": "Clients read rankings through the API, never directly from the Cache."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Buffer events in the Message Queue before stream counting."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so events and ranking reads survive one instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors so the fast path keeps counting after one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "batch-processor",
+      "message": "Connect the Task Scheduler to the Batch Processor that runs the exact recounts."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "stream-processor", "cache", "blob-storage", "task-scheduler", "batch-processor", "nosql-database", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → Message Queue for events and Web Server → Cache for ranking reads.",
+    "For the fast path wire Message Queue → Stream Processor → Cache, where each processor keeps a count-min sketch and a size-K heap. For the slow path wire Message Queue → Blob Storage for raw events and Web Server → Task Scheduler → Batch Processor.",
+    "Run two Web Servers and two Stream Processors. Each Web Server reaches the queue, the Task Scheduler, the Cache and Monitoring; the queue feeds both Stream Processors and Blob Storage. The Batch Processor reads Blob Storage and writes the NoSQL Database and the Cache, and the Cache falls back to NoSQL on a miss."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/top-k-elements-app-store-rankings-amazon-bestsellers",
+  "tips": [
+    "What data structure will you use to rank items?",
+    "How real-time is the ranking?",
+    "Do you do real-time or a scheduled job?",
+    "How do you handle this at scale?"
+  ],
+  "resources": [
+    {
+      "title": "Solution from ex-Meta engineer",
+      "url": "https://www.youtube.com/watch?v=1lfktgZ9Eeo",
+      "kind": "video"
+    },
+    {
+      "title": "Solution from FAANG Engineer",
+      "url": "https://www.youtube.com/watch?v=RvZbdYvrFeg",
+      "kind": "video"
+    },
+    {
+      "title": "Very detailed solution from Microsoft engineer",
+      "url": "https://serhatgiydiren.com/system-design-interview-top-k-problem-heavy-hitters/",
+      "kind": "article"
+    },
+    {
+      "title": "Solution on Blind",
+      "url": "https://www.teamblind.com/post/Please-critique-my-system-design-for-Top-K-most-searched-terms-Cfrqhnhk",
+      "kind": "discussion"
+    }
+  ]
+}

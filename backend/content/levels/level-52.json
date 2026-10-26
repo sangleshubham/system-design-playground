@@ -1,0 +1,111 @@
+{
+  "id": "level-52",
+  "actId": "act-9",
+  "order": 52,
+  "title": "Cloud Data Migration",
+  "difficulty": "expert",
+  "summary": "Move 5 PB from an on-premises file store into Google Cloud Storage with a manifest, parallel transfer agents, end-to-end checksums and delta sync before cutover.",
+  "narrative": "Move ~5 PB — ~2 B files — from an on-premises file store into Google Cloud Storage (GCS) while the source stays in use, with zero data loss and verified integrity. The Client here is the migration operator's console. The design uses two Blob Storage nodes: one plays the on-prem source file store and the other the GCS destination bucket. Over a 10 Gbps link (~1.25 GB/s ≈ 108 TB/day) 5 PB takes ≈ 46 days at full line rate, a 100 Gbps interconnect ≈ 5 days, and ~2 B files over ~50 days means ~460 files/s just to keep up.\n\nA migration controller on the Web Server manages the migration. It builds a manifest in the SQL Database — path, size, mtime, checksum and state per file or chunk — by listing the source, fanning listing tasks for directory subtrees out to the agents because listing ~2 B files is itself a large parallel job. It then splits the manifest into transfer tasks and enqueues them on a Message Queue. Many transfer agents (Workers) running next to the source pull tasks, read the files and upload them; large files go as parallel multipart or composite uploads that can resume after a failure. Each agent computes a CRC32C or MD5 over the source bytes and compares it with the checksum GCS reports for the stored object (composite objects only carry CRC32C); a mismatch fails the task and it is retried, and tasks that keep failing land in a Dead Letter Queue. Agents record every verified file in the manifest, so after any crash the migration resumes exactly where it stopped, and the data moves agent-to-bucket, never through the controller.\n\nNo data is lost because the manifest is the source of truth: a final reconciliation compares source and destination listings — counts, sizes and checksums — and the source is never deleted until verification passes. Files that change during the copy are caught by delta sync: the controller asks the Task Scheduler to enqueue delta-sync passes, in which agents rescan the source, compare mtime, size and checksum with the manifest and copy changed files again. The passes repeat until a short write freeze for cutover, when a last delta pass and the reconciliation run before applications switch to GCS. To speed up the transfer, run many agents and parallel streams, compress compressible data, use a dedicated interconnect, and for multi-petabyte sets consider offline Transfer Appliances. Optionally, a Rate Limiter throttles the agents' bandwidth so the copy doesn't starve production traffic, and Monitoring tracks throughput, failures and verification progress.",
+  "objectives": ["Manifest & resumable tasks", "End-to-end checksums", "Delta sync & cutover", "Fast, throttled transfer"],
+  "specs": {
+    "functional": [
+      "Build a manifest in SQL (path, size, mtime, checksum and state per file or chunk) by listing the source, and split it into transfer tasks on a Message Queue",
+      "Let transfer agents pull tasks and copy files from the on-prem source to GCS with parallel, resumable multipart or composite uploads",
+      "Verify every file end to end: compare a CRC32C/MD5 of the source bytes with the checksum GCS reports; retry on a mismatch and park tasks that keep failing in a Dead Letter Queue",
+      "Record every verified file in the manifest so the migration resumes where it stopped",
+      "Run scheduled delta-sync passes for files changed since they were copied, until a short write freeze for cutover"
+    ],
+    "nonFunctional": [
+      "~5 PB in ~2 B files with zero data loss and verified integrity",
+      "Keep the source in use during the copy and protect production bandwidth",
+      "Survive an agent failure without losing progress or re-copying verified files"
+    ],
+    "constraints": [
+      "Data moves agent-to-bucket, never through the controller: Web Servers never touch Blob Storage",
+      "Every Web Server path to the agents must pass through the Message Queue",
+      "Never delete the source until a final reconciliation of counts, sizes and checksums passes"
+    ],
+    "budgetPerHr": 4.5,
+    "latencyTargetMs": 190,
+    "capacity": [
+      "10 Gbps ≈ 1.25 GB/s ≈ 108 TB/day → 5 PB ≈ 46 days; 100 Gbps ≈ 5 days",
+      "~2 B files over ~50 days ≈ 460 files/s",
+      "Manifest ≈ 2 B file rows in SQL, plus chunk rows for large files"
+    ],
+    "tradeoff": "An online transfer keeps the source live and verifies each file as it lands but takes weeks at 10 Gbps; a dedicated interconnect or offline Transfer Appliances cut that time at extra cost and lead time. Throttling protects production but stretches the schedule, and delta sync avoids a long outage at the price of repeated rescans and a short write freeze at cutover.",
+    "bonus": "Connect Worker → Rate Limiter to throttle bandwidth and protect production, and add Monitoring for throughput, failures and verification."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Reach the controller through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Route to the migration controller" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Build the manifest" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Enqueue transfer tasks" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Let transfer agents pull tasks" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Copy source to destination with checksums" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Record verified files in the manifest" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park tasks that keep failing" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Schedule delta-sync passes until cutover" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "message-queue", "label": "Enqueue delta-sync passes" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "rate-limiter", "label": "Throttle bandwidth to protect production", "bonus": true },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for throughput and verification", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "blob-storage",
+      "message": "Data moves agent-to-bucket, never through the controller."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "worker",
+      "message": "Send transfer tasks to the agents through the Message Queue."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two transfer agents so the copy continues when one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "Connect the transfer queue to a Dead Letter Queue for tasks that keep failing."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "message-queue",
+      "message": "Connect the Task Scheduler to the Message Queue so delta-sync passes reach the agents."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "message-queue", "worker", "blob-storage", "dead-letter-queue", "task-scheduler", "rate-limiter", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server, the migration controller, and Web Server → SQL Database for the manifest. Add two Blob Storage nodes: the on-prem source and the GCS destination.",
+    "Wire Web Server → Message Queue → Worker for transfer tasks, with a Dead Letter Queue on the queue. Each Worker reads the source, writes the destination, compares checksums and records verified files in SQL.",
+    "Run two Workers, each connected to both Blob Storage nodes, SQL and a Rate Limiter. Connect Web Server → Task Scheduler → Message Queue for delta-sync passes, and Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/create-a-system-to-migrate-large-data-to-google-cloud",
+  "tips": [
+    "How will you structure the migration? Which machine manages it?",
+    "How do we ensure no data is lost in the process?",
+    "How will you ensure that the file's data didn't change in transit?",
+    "What are some strategies to speed up the transfer?"
+  ],
+  "resources": [
+    {
+      "title": "3 strategies",
+      "url": "https://newrelic.com/blog/best-practices/migrating-data-to-cloud-avoid-downtime-strategies",
+      "kind": "article"
+    },
+    {
+      "title": "Related interview experience",
+      "url": "https://leetcode.com/discuss/post/1733573/rubrik-file-transfer-interview-question-43hjl/",
+      "kind": "discussion"
+    }
+  ]
+}

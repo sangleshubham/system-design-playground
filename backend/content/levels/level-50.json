@@ -1,0 +1,120 @@
+{
+  "id": "level-50",
+  "actId": "act-9",
+  "order": 50,
+  "title": "Job Scheduler",
+  "difficulty": "easy",
+  "summary": "Run one-off and cron jobs on time with sharded schedulers that claim due jobs with leases, a priority queue and idempotent, at-least-once Workers.",
+  "narrative": "Let users submit jobs that run once at a time T or on a cron schedule, with priorities and retries. Jobs must start on time — within ~1 s — and must never be lost. Plan for ~100 M scheduled jobs and ~10 K runs/s at peak, because cron schedules cluster at the top of each hour, ~10× the average of ~1 K runs/s. On a single machine this is simple: keep jobs in a min-heap ordered by next run time, let a timer thread sleep until the earliest job is due, and hand due jobs to a worker pool; a new job due sooner than the current earliest wakes the timer. The distributed design keeps the same roles — an ordered list of due times, a scheduler and workers — but makes each one durable and replicated.\n\nClients call the job API through a Load Balancer and Web Servers, which store job definitions, next_run_time and run history in the SQL Database, indexed by next_run_time. Several Task Scheduler instances each own a shard of the jobs; shard ownership and leader election come from a coordination service such as ZooKeeper / etcd, so when one scheduler dies its shards move to another. Each scheduler repeatedly claims the jobs in its shards that are due in the next few seconds with a lease: a conditional update that sets claimed_by and lease_until only if the job is unclaimed or its lease has expired. One scheduler holds a job at a time, and if a scheduler stalls past its lease another may claim the job again, which is one more reason runs must be idempotent. The scheduler keeps its claimed jobs in an in-memory min-heap — the single-machine design again — pushes each run to a Message Queue with separate priority lanes when it falls due, and advances next_run_time for recurring jobs. A job submitted with a due time sooner than the next polling window is handed by the Web Server straight to a Task Scheduler, which claims it the same way, instead of waiting for the next poll.\n\nWorkers pull runs from the queue, execute them idempotently, keyed by job id and scheduled time, and record each run's status in SQL; a failed run is retried with exponential backoff by setting its next attempt time. Delivery is at least once: a run whose Worker dies is re-delivered when its visibility timeout or lease expires, so a job may occasionally run twice but is never lost. Runs that keep failing land in a Dead Letter Queue for inspection. Many jobs due at the same moment are absorbed by the queue while Workers autoscale on its depth. Optionally add Monitoring for schedule lag, queue depth and failures.",
+  "objectives": ["Due-time index & polling", "Lease-based claiming", "At-least-once idempotent runs", "Retries & dead letters"],
+  "specs": {
+    "functional": [
+      "Submit one-off jobs for a time T and recurring cron jobs, each with a priority and a retry policy",
+      "Store job definitions, next_run_time and run history in SQL",
+      "Claim due jobs in each scheduler's shards with a leased conditional update, enqueue runs in priority lanes and advance next_run_time for recurring jobs",
+      "Hand jobs due before the next polling window directly to a Task Scheduler",
+      "Execute runs idempotently on Workers, record their status, retry with exponential backoff and park runs that keep failing in a Dead Letter Queue"
+    ],
+    "nonFunctional": [
+      "~100 M scheduled jobs; ~10 K runs/s at the top of each hour (~10× the average)",
+      "Start runs within ~1 s of their scheduled time",
+      "Never lose a job: at-least-once execution that survives a Task Scheduler or Worker failure"
+    ],
+    "constraints": [
+      "Web Servers never run jobs; runs reach Workers only through the Message Queue",
+      "Claim jobs with a conditional update and a lease, never a plain read followed by a write",
+      "Make every job idempotent, because a re-delivered run may execute twice"
+    ],
+    "budgetPerHr": 5,
+    "latencyTargetMs": 160,
+    "capacity": [
+      "~100 M jobs; ~1 K runs/s on average, ~10 K runs/s at the top of the hour",
+      "Each scheduler polls its shards for jobs due in the next few seconds",
+      "Workers autoscale on queue depth to absorb the hourly spikes"
+    ],
+    "tradeoff": "Polling SQL for due jobs is simple and durable but adds database load and up to one polling interval of delay, which is why jobs due very soon skip the poll. At-least-once delivery never loses a run but may run one twice, so jobs must be idempotent; exactly-once execution would need far more coordination. Sharding the schedulers scales claiming but needs a coordination service to reassign shards when one dies.",
+    "bonus": "Connect Task Scheduler → ZooKeeper / etcd for shard ownership and leader election, and add Monitoring for schedule lag and failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route job API calls through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance requests across Web Servers" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store job definitions, next run times and history" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Hand jobs due very soon to a scheduler" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "sql-database", "label": "Claim due jobs with a lease" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "message-queue", "label": "Enqueue runs by priority" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Deliver runs to Workers" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Record run status and schedule retries" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "dead-letter-queue", "label": "Park runs that keep failing" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "zookeeper-etcd", "label": "Coordinate shard ownership and leader election", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for schedule lag and failures", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "worker",
+      "message": "Don't call Workers from the API — runs go through the schedulers and the queue."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "task-scheduler",
+      "toComponentId": "worker",
+      "message": "Deliver runs from the schedulers to Workers through the Message Queue."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "task-scheduler",
+      "message": "A single scheduler is a single point of failure — run several, each owning shards."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two Workers so runs continue after one fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "dead-letter-queue",
+      "message": "Connect the run queue to a Dead Letter Queue for runs that keep failing."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "task-scheduler", "message-queue", "worker", "dead-letter-queue", "zookeeper-etcd", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server, and Web Server → SQL Database for job definitions, next_run_time and run history.",
+    "Connect Web Server → Task Scheduler for jobs due very soon, and Task Scheduler → SQL Database to claim due jobs with a lease. Then wire Task Scheduler → Message Queue → Worker, with Worker → SQL Database for run status and a Dead Letter Queue on the queue.",
+    "Run two Web Servers, two Task Schedulers and two Workers. Each Web Server reaches SQL, both schedulers and Monitoring; each scheduler reaches SQL, the queue and ZooKeeper / etcd; the queue feeds both Workers and the Dead Letter Queue, and each Worker writes SQL."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-job-scheduler",
+  "tips": [
+    "How will you do this on a single machine first?",
+    "How will you schedule jobs and execute them at the right time?",
+    "What if there are multiple jobs at the same time?",
+    "What if a job comes in that needs to be executed very soon?",
+    "How do you scale it across multiple machines to handle more jobs?"
+  ],
+  "resources": [
+    {
+      "title": "Popular Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/general-discussion/1082786/System-Design%3A-Designing-a-distributed-Job-Scheduler-or-Many-interesting-concepts-to-learn",
+      "kind": "discussion"
+    },
+    {
+      "title": "Solution from Google Engineer",
+      "url": "https://www.youtube.com/watch?v=pzDwYHRzEnk",
+      "kind": "video"
+    },
+    {
+      "title": "High Level Overview",
+      "url": "https://blog.algomaster.io/p/design-a-distributed-job-scheduler",
+      "kind": "article"
+    },
+    {
+      "title": "Mock Interview",
+      "url": "https://interviewing.io/mocks/faang-system-design-job-scheduler",
+      "kind": "video"
+    }
+  ]
+}

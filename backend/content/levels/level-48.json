@@ -1,0 +1,100 @@
+{
+  "id": "level-48",
+  "actId": "act-9",
+  "order": 48,
+  "title": "Sorting Large Data Sets",
+  "difficulty": "easy",
+  "summary": "Sort 10 TB of records across a cluster with external merge sort and TeraSort-style range partitioning, reading and writing the data as few times as possible.",
+  "narrative": "Sort 10 TB of 100-byte records (10^11 records) stored as files, on a cluster of commodity machines with 64 GB of RAM each — far more data than any one machine can hold in memory. The Client here is the engineer submitting the sort job through a job API. The input files and the sorted output live in Blob Storage, and the SQL Database keeps job metadata, the partition boundaries, task progress and the output manifest. Spread over 100 machines that is ≈ 100 GB each; at ~200 MB/s of sequential disk throughput one pass over 100 GB takes ~8 min, so every extra pass over the data is expensive, and the shuffle moves ~10 TB across the network.\n\nOn one machine, use external merge sort. Read a RAM-sized chunk, sort it in memory and write it to the machine's local scratch disk as a sorted run; repeat until the input is consumed. Then k-way merge the runs: keep the current head record of every run in a min-heap, repeatedly emit the smallest and refill from the run it came from, streaming everything with large sequential buffered reads and writes. Disk is the bottleneck, so minimise I/O: sequential access only, big buffers, compressed runs, runs as large as RAM allows and a merge fan-in high enough to merge all runs at once, so the data is read and written as few times as possible — ideally two passes, one to create the runs and one to merge them.\n\nAcross the cluster, follow TeraSort on MapReduce. The Web Server accepts the job, records it in SQL and hands it to the Task Scheduler, which plays the coordinator and assigns tasks to the Batch Processors. First a sampling task reads a small sample of keys and picks range-partition boundaries — e.g. 99 split points for 100 reduce tasks — so each key range holds about the same amount of data. Map tasks read input splits from Blob Storage in parallel and partition every record by key range; the shuffle sends each range to the reduce task that owns it. Each reduce task sorts its own range, externally if it doesn't fit in RAM, and writes one part file to Blob Storage. Because the ranges are ordered, concatenating the part files in order gives the globally sorted output with no final merge. Batch Processors report their progress to SQL, and the terabytes never pass through the Web Server. The coordinator tracks every task and re-runs only the tasks of a failed machine, including finished map tasks whose output sat on its local disk. Optionally tell the engineer through the Notification Service when the job finishes or fails, and add Monitoring for task progress and failures.",
+  "objectives": ["External merge sort", "Range-partitioned shuffle", "Minimal disk passes", "Task-level failure recovery"],
+  "specs": {
+    "functional": [
+      "Accept sort jobs through a job API and record job metadata, partition boundaries and progress in SQL",
+      "Sample input keys to choose range-partition boundaries so each reduce task gets about the same amount of data",
+      "Map tasks read input splits from Blob Storage in parallel and partition records by key range; the shuffle sends each range to its reduce task",
+      "Each reduce task sorts its range with external merge sort and writes one part file to Blob Storage; the part files in order form the sorted output",
+      "Record task progress and the output manifest in SQL"
+    ],
+    "nonFunctional": [
+      "Sort 10 TB of 100-byte records (10^11 records) on machines with 64 GB of RAM each",
+      "Read and write the data as few times as possible — ideally two passes — with sequential access, large buffers, compressed runs and a high merge fan-in",
+      "Survive a machine failure by re-running only that machine's tasks"
+    ],
+    "constraints": [
+      "Web Servers must never read or write the data files; Batch Processors read input and write output in Blob Storage directly",
+      "Keep sorted runs as large as RAM allows and merge them with a min-heap in as few passes as possible",
+      "Partition by sampled key ranges so the sorted part files concatenate into the final output without a global merge"
+    ],
+    "budgetPerHr": 5,
+    "latencyTargetMs": 530,
+    "capacity": [
+      "10 TB / 100-byte records = 10^11 records; over 100 machines ≈ 100 GB each",
+      "~200 MB/s sequential disk → one pass over 100 GB ≈ 8 min per machine",
+      "The shuffle moves ~10 TB across the network"
+    ],
+    "tradeoff": "Sampling costs an extra read of a small fraction of the input but balances the reduce tasks and makes the output sorted by simple concatenation; heavily skewed keys still need finer boundaries. A higher merge fan-in saves whole passes over the disk but needs more RAM for read buffers, and compressing runs cuts disk and network bytes at the cost of CPU.",
+    "bonus": "Connect Batch Processor → Notification Service to tell the engineer when the job finishes or fails, and add Monitoring for task progress and failures."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Submit sort jobs through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Route job API calls to the Web Server" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Record the job, partition boundaries and progress" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Hand the job to the coordinator" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "batch-processor", "label": "Run sample, partition, shuffle and merge tasks" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "blob-storage", "label": "Read input splits and write sorted part files" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "sql-database", "label": "Record task progress and the output manifest" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "notification-service", "label": "Notify the engineer when the job finishes or fails", "bonus": true },
+    { "id": "m9", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for task progress and failures", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "blob-storage",
+      "message": "Don't stream terabytes through the API server — the cluster reads and writes storage directly."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "batch-processor",
+      "message": "Sorting needs many machines; run at least two Batch Processors so a failure re-runs only its tasks."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "batch-processor",
+      "message": "Connect the Task Scheduler to the Batch Processors whose tasks it coordinates."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "task-scheduler", "batch-processor", "blob-storage", "notification-service", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server for the job API, and Web Server → SQL Database for job metadata. The data itself never passes through the Web Server.",
+    "Connect Web Server → Task Scheduler, the coordinator, and Task Scheduler → Batch Processor. Batch Processors read input splits from Blob Storage, write sorted part files back to it, and record progress and the manifest in SQL.",
+    "Run two Batch Processors, both fed by the Task Scheduler; each reaches Blob Storage, SQL and the Notification Service. Add Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-system-for-sorting-large-data-sets",
+  "tips": [
+    "How much data do we need to sort?",
+    "What kind of machines do we have at our disposal?",
+    "How do you make data reading and writing efficient, because you will be reading and writing data from files.",
+    "How can we minimize reads and writes to hard drives, because for small data, sorting is done on RAM, and you can't do that with large data."
+  ],
+  "resources": [
+    {
+      "title": "Excellent solution",
+      "url": "https://quanticdev.com/algorithms/distributed-computing/distributed-sorting/",
+      "kind": "article"
+    },
+    {
+      "title": "From the same author, a very detailed video",
+      "url": "https://www.youtube.com/watch?v=vgKjatRVtys",
+      "kind": "video"
+    },
+    {
+      "title": "Leetcode",
+      "url": "https://leetcode.com/discuss/interview-question/4807845/Microsoft-Interview/",
+      "kind": "discussion"
+    }
+  ]
+}

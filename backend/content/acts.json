@@ -46,5 +46,11 @@
     "order": 8,
     "title": "Money & Flash Sales",
     "description": "Exactly-once inventory and payments: free-food vouchers, room bookings, card charges and wire transfers."
+  },
+  {
+    "id": "act-9",
+    "order": 9,
+    "title": "Batch & Coordination",
+    "description": "Sort, rank, schedule and move data in bulk across fleets of machines."
   }
 ]
