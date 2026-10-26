@@ -11,7 +11,7 @@
  *
  * MIRROR-DRIFT NOTE: COMPONENT_ICON_IDS below is a hand-mirror of the frontend icon
  * registry's component entries (frontend/src/app/shared/component-icon.registry.ts) —
- * the registry keys are the source of truth for these 44 ids. Keep the two in sync by hand.
+ * the registry keys are the source of truth for these 50 ids. Keep the two in sync by hand.
  */
 import { z } from 'zod';
 
@@ -32,9 +32,9 @@ export const CATEGORIES = [
 export const CategorySchema = z.enum(CATEGORIES);
 export type Category = z.infer<typeof CategorySchema>;
 
-/** The 44 valid component icon ids — hand-mirror of the frontend registry's component
+/** The 50 valid component icon ids — hand-mirror of the frontend registry's component
  *  entries (frontend/src/app/shared/component-icon.registry.ts). Order: the 23 aws-* ids
- *  in catalog order, then the 21 tile-* ids in catalog order. fallback-* ids are
+ *  in catalog order, then the 27 tile-* ids in catalog order. fallback-* ids are
  *  deliberately EXCLUDED — they are runtime-only (FR-007) and must never be valid content. */
 export const COMPONENT_ICON_IDS = [
   'aws-route-53',
@@ -65,6 +65,8 @@ export const COMPONENT_ICON_IDS = [
   'tile-reverse-proxy',
   'tile-prompt-router',
   'tile-websocket-server',
+  'tile-batch-processor',
+  'tile-ml-model-server',
   'tile-chunking-service',
   'tile-reranker',
   'tile-geo-index',
@@ -72,12 +74,16 @@ export const COMPONENT_ICON_IDS = [
   'tile-context-store',
   'tile-bloom-filter',
   'tile-dead-letter-queue',
+  'tile-auth-service',
   'tile-notification-service',
   'tile-payment-service',
+  'tile-external-api',
   'tile-zookeeper-etcd',
+  'tile-feature-flag-service',
   'tile-key-generation-service',
   'tile-circuit-breaker',
   'tile-log-aggregator',
+  'tile-trace-collector',
   'tile-guardrail-service',
   'tile-llm-observability',
   'tile-model-registry',

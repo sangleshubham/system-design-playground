@@ -3,7 +3,7 @@
  * the mission-check semantics live in exactly two places (backend mission.service +
  * the playground store) by design — see data-model.md § Mission.
  *
- * MIRROR-DRIFT NOTE: the backend validates Component.icon against the 44-id
+ * MIRROR-DRIFT NOTE: the backend validates Component.icon against the 50-id
  * COMPONENT_ICON_IDS enum in backend/src/models/index.ts; here Component.icon stays
  * `string` — the frontend's safety net is the componentIconName fallback resolver, not
  * the type.

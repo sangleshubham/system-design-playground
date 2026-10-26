@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { ComponentSchema } from '../../src/models/index.js';
+import { COMPONENT_ICON_IDS, ComponentSchema } from '../../src/models/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPONENTS_JSON_PATH = join(HERE, '../../content/components.json');
@@ -33,12 +33,13 @@ describe('icon id content validation', () => {
     expect(result.success).toBe(true);
   });
 
-  it('has 44 pairwise-distinct icon values across the shipped catalog', () => {
+  it('has pairwise-distinct icon values covering the component icon vocabulary', () => {
     const raw = loadShippedComponents();
     const components = z.array(ComponentSchema).parse(raw);
-    expect(components).toHaveLength(44);
+    expect(components).toHaveLength(COMPONENT_ICON_IDS.length);
     const icons = components.map((c) => c.icon);
     expect(new Set(icons).size).toBe(icons.length);
+    expect([...icons].sort()).toEqual([...COMPONENT_ICON_IDS].sort());
   });
 
   it('rejects a legacy category name ("storage") as an icon value', () => {

@@ -132,6 +132,16 @@
     "icon": "aws-managed-flink"
   },
   {
+    "id": "batch-processor",
+    "name": "Batch Processor",
+    "tech": "Spark / Hadoop MapReduce",
+    "category": "compute",
+    "description": "Runs large offline jobs over files in parallel (split, map, shuffle, reduce), trading latency for throughput.",
+    "costPerHr": 1.0,
+    "latencyMs": 300,
+    "icon": "tile-batch-processor"
+  },
+  {
     "id": "task-scheduler",
     "name": "Task Scheduler",
     "tech": "Cron / Airflow",
@@ -150,6 +160,16 @@
     "costPerHr": 0.7,
     "latencyMs": 60,
     "icon": "aws-sagemaker-ai"
+  },
+  {
+    "id": "ml-model-server",
+    "name": "ML Model Server",
+    "tech": "Triton / TF Serving / SageMaker",
+    "category": "compute",
+    "description": "Serves trained models behind a low-latency API for online predictions such as ETAs, prices, rankings and fraud scores.",
+    "costPerHr": 0.9,
+    "latencyMs": 30,
+    "icon": "tile-ml-model-server"
   },
   {
     "id": "llm-inference",
@@ -336,6 +356,16 @@
   },
 
   {
+    "id": "auth-service",
+    "name": "Auth Service",
+    "tech": "OAuth 2.0 / OIDC (Keycloak, Auth0)",
+    "category": "services",
+    "description": "Verifies credentials, hashes passwords, and issues and validates session tokens (JWT / OAuth) so services never handle raw passwords.",
+    "costPerHr": 0.3,
+    "latencyMs": 30,
+    "icon": "tile-auth-service"
+  },
+  {
     "id": "notification-service",
     "name": "Notification Service",
     "tech": "FCM / APNs / Twilio",
@@ -356,6 +386,16 @@
     "icon": "tile-payment-service"
   },
   {
+    "id": "external-api",
+    "name": "Third-Party API",
+    "tech": "Partner API / data feed (weather, exchange, banks)",
+    "category": "services",
+    "description": "An outside system you call but do not run, such as a weather provider, a stock-exchange feed, a retailer website or a bank network.",
+    "costPerHr": 0.1,
+    "latencyMs": 150,
+    "icon": "tile-external-api"
+  },
+  {
     "id": "zookeeper-etcd",
     "name": "ZooKeeper / etcd",
     "tech": "ZooKeeper / etcd",
@@ -364,6 +404,16 @@
     "costPerHr": 0.45,
     "latencyMs": 15,
     "icon": "tile-zookeeper-etcd"
+  },
+  {
+    "id": "feature-flag-service",
+    "name": "Feature Flag Service",
+    "tech": "LaunchDarkly / Optimizely / Unleash",
+    "category": "services",
+    "description": "Stores flag and experiment configuration and assigns users to variants deterministically, so features and tests can be switched on and off without a deploy.",
+    "costPerHr": 0.2,
+    "latencyMs": 3,
+    "icon": "tile-feature-flag-service"
   },
   {
     "id": "key-generation-service",
@@ -414,6 +464,16 @@
     "costPerHr": 0.4,
     "latencyMs": 60,
     "icon": "tile-log-aggregator"
+  },
+  {
+    "id": "trace-collector",
+    "name": "Trace Collector",
+    "tech": "OpenTelemetry Collector / Jaeger",
+    "category": "services",
+    "description": "Receives spans from instrumented services, batches and samples them, and forwards complete traces to storage.",
+    "costPerHr": 0.3,
+    "latencyMs": 5,
+    "icon": "tile-trace-collector"
   },
   {
     "id": "guardrail-service",
