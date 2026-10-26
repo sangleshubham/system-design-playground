@@ -1,0 +1,123 @@
+{
+  "id": "level-35",
+  "actId": "act-6",
+  "order": 35,
+  "title": "Live Comments",
+  "difficulty": "hard",
+  "summary": "Persist live-video comments and fan them out through video-specific channels while retaining cursor-based history.",
+  "narrative": "Viewers of a live video post comments and see new comments from others within ~2 s. Late joiners should see recent history and be able to scroll back. Expect ~100 M concurrent viewers across the platform; a top stream can have ~1 M viewers posting ~1 K comments/s, with delivery p99 < 2 s. Post comments using ordinary HTTP writes, while persistent WebSocket or SSE connections carry new comments to viewers.\n\nRoute the comment API through a Load Balancer to redundant Web Servers. Persist comments in NoSQL partitioned by video id and sorted by time, using a stable comment id to distinguish equal timestamps and deduplicate retries. Publish each accepted comment to that video's Pub/Sub channel after persistence; retain publication intent with the durable record and retry partial failures so a crash between storage and publication does not silently omit it. Cache the last ~N comments per live video for joiners; serve older pages from NoSQL with a stable time-and-id cursor. Replay and client-side deduplication can repair reconnect gaps without promising exactly-once socket delivery.\n\nWebSocket Servers play the realtime servers here (they can hold SSE streams too). The L7 Load Balancer also routes persistent connections, using consistent hashing on video id to place a video's viewers on the same subset of redundant WebSocket Servers. Each server subscribes to a limited set of video channels, receives each published comment once in the normal path and pushes it to all its local viewers. Pub/Sub separates comment writes from connection placement; the API never calls socket servers directly. On mega-streams, sample or rank the live feed because clients cannot render thousands of comments per second, while keeping the full persisted history available. Optionally throttle comment spam with a Rate Limiter and monitor publication failures and delivery lag.",
+  "objectives": ["HTTP writes & live delivery", "Video-aware connection routing", "Recent & paginated history", "Mega-stream fan-out"],
+  "specs": {
+    "functional": [
+      "Persist comments in video-partitioned, time-ordered NoSQL and publish accepted comments to per-video Pub/Sub channels",
+      "Route persistent connections by video id to a bounded subset of WebSocket Servers",
+      "Push each received comment to local viewers subscribed to its video",
+      "Cache the last ~N comments for joiners and fetch older pages using a stable cursor",
+      "Support reconnect catch-up and deduplication; sample or rank the live feed on mega-streams"
+    ],
+    "nonFunctional": [
+      "Support ~100 M concurrent viewers platform-wide",
+      "Target delivery p99 < 2 s; accommodate ~1 M viewers and ~1 K comments/s on the top stream",
+      "Survive an API or realtime server instance failure; reconnect viewers to healthy servers"
+    ],
+    "constraints": [
+      "Never connect the comment API directly to WebSocket Servers; all API-to-socket paths pass through Pub/Sub",
+      "Clients access comment history through the API, never directly from NoSQL",
+      "Persist before publishing and retry durable publication intent; use stable comment ids for duplicate suppression",
+      "Retain full stored history even when the live feed is sampled or ranked"
+    ],
+    "budgetPerHr": 4.5,
+    "latencyTargetMs": 100,
+    "capacity": [
+      "~100 M concurrent viewers platform-wide",
+      "Top live video: ~1 M viewers × ~1 K comments/s implies up to ~1 B viewer-comment deliveries/s before sampling",
+      "Delivery p99 < 2 s; cache last ~N comments per video and paginate older history"
+    ],
+    "tradeoff": "Video-aware routing reduces the number of channels each realtime server subscribes to, but mega-streams still require many servers. Sampling and ranking bound delivery and rendering load while omitting some comments from the live view; durable cursor-based history preserves access to all accepted comments.",
+    "bonus": "Connect Web Server → Rate Limiter to throttle comment spam and add Monitoring for publication and live delivery lag."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route comment and realtime traffic through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance comment API writes and history reads" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "websocket-server", "label": "Route realtime connections by video id" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Persist comments in NoSQL" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "pub-sub", "label": "Publish comments to video channels" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Fan comments out to realtime servers" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Cache recent comments for joiners" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "rate-limiter", "label": "Throttle comment spam", "bonus": true },
+    { "id": "m9", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for comment delivery lag", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "websocket-server",
+      "message": "Publish comments to Pub/Sub rather than calling WebSocket Servers directly."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients read comment history through the API, never directly from NoSQL."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "pub-sub",
+      "fromComponentId": "web-server",
+      "toComponentId": "websocket-server",
+      "message": "Route every comment API to WebSocket Server path through Pub/Sub."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers for comment writes and history reads."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "websocket-server",
+      "message": "Run at least two WebSocket Servers so viewers can reconnect after an instance fails."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "websocket-server",
+      "companionComponentId": "pub-sub",
+      "message": "Connect WebSocket Servers to Pub/Sub for live comment delivery."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "websocket-server", "nosql-database", "pub-sub", "cache", "rate-limiter", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → NoSQL for durable video-partitioned comments and → Cache for recent joiner history.",
+    "Route Load Balancer → WebSocket Server by video id. Wire Web Server → Pub/Sub → WebSocket Server so HTTP posting and live fan-out stay independent; avoid a direct API-to-socket edge.",
+    "Use two Web Servers and two WebSocket Servers behind the Load Balancer. Each Web Server reaches NoSQL, Pub/Sub and Cache; Pub/Sub reaches both socket servers. Add each Web Server → Rate Limiter and → Monitoring. Use cursor history for catch-up and bounded live delivery on mega-streams."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-live-comments-feature-for-facebook",
+  "tips": [
+    "How will you push live comments to all users?",
+    "How will you make sure new comments are delivered in real-time?",
+    "How will you ensure millions of users get live comments in real time?"
+  ],
+  "resources": [
+    {
+      "title": "Great Solution",
+      "url": "https://www.hellointerview.com/learn/system-design/problem-breakdowns/fb-live-comments",
+      "kind": "article"
+    },
+    {
+      "title": "Video Solution from Meta Engineer",
+      "url": "https://www.youtube.com/watch?v=LjLx0fCd1k8",
+      "kind": "video"
+    },
+    {
+      "title": "FB Engineering Blog",
+      "url": "https://engineering.fb.com/2011/02/07/core-infra/live-commenting-behind-the-scenes/",
+      "kind": "article"
+    },
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/post/583184/fbinstagram-live-comments-system-design-fqtzt/",
+      "kind": "discussion"
+    }
+  ]
+}

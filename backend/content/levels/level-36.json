@@ -1,0 +1,119 @@
+{
+  "id": "level-36",
+  "actId": "act-6",
+  "order": 36,
+  "title": "Live Stock Prices",
+  "difficulty": "easy",
+  "summary": "Ingest scheduled exchange feeds into symbol-ordered processing, price charts and pushed watch-list quotes.",
+  "narrative": "Build a dashboard showing the latest stock quotes and historical price charts. Ingest ~100 K symbols from ~60 exchanges, reaching ~1 M ticks/s at the market open, and serve ~10 M concurrent dashboard users. The Third-Party API represents the external exchange/vendor market-data feeds. Feed-handler Workers keep persistent connections to those feeds and normalize ticks; user requests never initiate exchange calls.\n\nAn admin API registers exchange trading hours with the Task Scheduler, which starts and stops redundant feed handlers on each exchange's schedule. Workers publish normalized ticks to a Message Queue log partitioned by symbol, preserving per-symbol order. Use feed sequence numbers to detect gaps and suppress duplicates from redundant handlers. Stream Processors refresh each symbol's latest quote in Cache and roll ticks into 1 s / 1 min OHLC candles in the Time-Series Database. At one candle/min for 100 K symbols, a full 24-hour coverage estimate is ~144 M rows/day; actual volume follows exchange sessions.\n\nThe REST API serves initial quotes from Cache and chart history from the time-series store through Web Servers behind a Load Balancer. Dashboards then use push: each client holds a WebSocket and subscribes to its watch-list symbols. Stream Processors publish throttled updates, at most a few per second per symbol, to Pub/Sub; redundant WebSocket Servers fan them out to local subscribers. Reconnect clients and reload fresh quotes after a socket failure. Optionally archive raw ticks from the log to Blob Storage for replay and monitor feed gaps, processor lag and stale quotes.",
+  "objectives": ["Scheduled exchange ingestion", "Symbol-ordered tick streams", "OHLC chart storage", "Watch-list quote push"],
+  "specs": {
+    "functional": [
+      "Register exchange schedules through the API and start/stop persistent feed handlers at trading hours",
+      "Normalize external ticks and publish them to a log partitioned by stock symbol",
+      "Maintain latest quotes in Cache and aggregate 1 s / 1 min OHLC candles in the Time-Series Database",
+      "Serve initial quotes and chart history over REST",
+      "Push throttled symbol updates through Pub/Sub to WebSocket watch-list subscribers"
+    ],
+    "nonFunctional": [
+      "Ingest ~1 M ticks/s at the open across ~100 K symbols and ~60 exchanges",
+      "Support ~10 M concurrent dashboards with at most a few pushed updates/s per symbol",
+      "Tolerate a feed-handler or socket-server instance failure and detect feed sequence gaps"
+    ],
+    "constraints": [
+      "Never call the external exchange feed from the Web Server request path",
+      "Clients fetch chart history through the API, never directly from the Time-Series Database",
+      "Connect the Message Queue to the Stream Processor; preserve per-symbol ordering and deduplicate redundant feeds",
+      "Keep chart history separate from latest-quote Cache entries"
+    ],
+    "budgetPerHr": 7.0,
+    "latencyTargetMs": 310,
+    "capacity": [
+      "~100 K symbols on ~60 exchanges; ~1 M ticks/s at the market open",
+      "~10 M concurrent dashboard users; throttle each symbol to at most a few updates/s",
+      "100 K symbols × 1 candle/min × 1,440 min/day ≈144 M rows/day at 24-hour coverage; trading sessions reduce actual rows"
+    ],
+    "tradeoff": "A symbol-partitioned log preserves ordering and supports replay, while OHLC rollups make chart reads smaller than raw-tick scans. Throttled push reduces socket bandwidth but hides intermediate ticks. Exchange schedules and sequence-aware redundant feed handlers add coordination in exchange for continuity.",
+    "bonus": "Connect Message Queue → Blob Storage to archive raw ticks for replay and add Monitoring for stale quotes and feed gaps."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route quote and chart requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance quote and chart API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read the latest quote from Cache" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "timeseries-db", "label": "Read chart candles from the Time-Series Database" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Register exchange trading hours" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "worker", "label": "Start and stop exchange feed handlers" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "external-api", "label": "Connect feed handlers to market-data feeds" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "message-queue", "label": "Append symbol-partitioned ticks to the log" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Process ordered ticks" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Refresh latest quotes in Cache" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "timeseries-db", "label": "Write OHLC candles" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "client", "toComponentId": "websocket-server", "label": "Subscribe sockets to watch-list symbols" },
+    { "id": "m13", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "pub-sub", "label": "Publish throttled quote updates" },
+    { "id": "m14", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Fan quotes out to dashboard sockets" },
+    { "id": "m15", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "blob-storage", "label": "Archive raw ticks for replay", "bonus": true },
+    { "id": "m16", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for feed gaps and stale quotes", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "external-api",
+      "message": "Keep exchange feed connections in Workers; never call the provider on the request path."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "timeseries-db",
+      "message": "Clients read chart history through the API, never directly from the Time-Series Database."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run redundant feed handlers so one Worker failure does not stop ingestion."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "websocket-server",
+      "message": "Run at least two WebSocket Servers for dashboard reconnections."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "stream-processor",
+      "message": "Connect the tick log to a Stream Processor for quotes and candles."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "websocket-server", "cache", "timeseries-db", "task-scheduler", "monitoring", "worker", "external-api", "message-queue", "stream-processor", "blob-storage", "pub-sub"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server, then Web Server → Cache for initial quotes and → Time-Series Database for chart history. Keep exchange calls off the API path.",
+    "Wire Web Server → Task Scheduler → Worker → Third-Party API for exchange sessions, and Worker → Message Queue → Stream Processor. Connect the processor to Cache and the Time-Series Database, partitioning ticks by symbol.",
+    "Use two Web Servers, two feed-handler Workers and two WebSocket Servers. Each Web Server reaches Cache, Time-Series Database, Task Scheduler and Monitoring; the scheduler reaches both Workers, each wired to the feed and log. Add Client → both socket servers and Stream Processor → Pub/Sub → both socket servers, plus Message Queue → Blob Storage."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-system-to-view-latest-stock-prices",
+  "tips": [
+    "How will you ingest real time data?",
+    "How will you store the data, if you need to display a graph?",
+    "How will you group data by stock symbol?",
+    "Once updated in the backend, how will you update it in your dashboard? pull or push?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/431712/Bloomberg-or-Design-a-system-to-give-prices-of-a-stock",
+      "kind": "discussion"
+    },
+    {
+      "title": "Detailed solution",
+      "url": "https://harshsavasil.medium.com/design-real-time-stock-price-feed-9e1fba0a1c4e",
+      "kind": "article"
+    },
+    {
+      "title": "Real case study",
+      "url": "https://www.paytmmoney.com/blog/how-we-built-an-in-house-price-alerts-system/",
+      "kind": "article"
+    }
+  ]
+}

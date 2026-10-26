@@ -1,0 +1,105 @@
+{
+  "id": "level-34",
+  "actId": "act-6",
+  "order": 34,
+  "title": "Live Like Updates",
+  "difficulty": "medium",
+  "summary": "Extend durable like counters with coalesced Pub/Sub updates to millions of subscribed WebSocket clients.",
+  "narrative": "Extend level-33's Facebook Like Counter so people watching an open feed see counts change without refreshing. Keep its write path: conditional NoSQL records keyed by (post_id, user_id), effective like/unlike events in a post-partitioned log, Stream Processor aggregation and cached counts. Unlike deletes a record and own-like checks remain point reads. At ~5 B likes/day, about 58 K/s average and ~500 K/s peak, celebrity posts still need batched counters and idempotent processing; the new challenge is broadcasting those counts to millions of screens.\n\nEach open browser or app holds a WebSocket and subscribes only to post ids currently on screen. With ~100 M concurrent connections and ~100 K connections per socket server, plan for ~1,000 socket servers. A single hot post can have millions of simultaneous viewers. Stream Processors coalesce deltas over ~1–2 s and publish at most about one 'post X now has N likes' update per second per post to its Pub/Sub topic. One publish fans out to thousands of socket servers, each pushing to its local subscribers; nobody needs 10 K separate updates/s for a celebrity post.\n\nKeep like API servers independent of socket server membership: they append to the log and never call socket servers directly. Pub/Sub delivers aggregated counts to redundant WebSocket Servers, and redundant Stream Processors recover from the replicated log. Replicate durable like and counter state, repair partial record/event publication failures, and apply batches idempotently before committing offsets. Counts are eventually consistent; clients can accept newer count versions and resubscribe after reconnecting. Optionally read the latest count from Cache when a socket subscribes, and monitor connection churn and end-to-end update freshness.",
+  "objectives": ["Preserve durable like counts", "Coalesce per-post updates", "Topic-based socket fan-out", "Reconnect & resubscribe"],
+  "specs": {
+    "functional": [
+      "Persist conditional like records, publish effective transitions and aggregate counters in NoSQL and Cache as in level-33",
+      "Read cached counts through the HTTP API and subscribe WebSocket clients to on-screen post ids",
+      "Coalesce updates over ~1–2 s and publish approximately once/s per post to its Pub/Sub topic",
+      "Fan each topic out to the socket servers with interested local viewers",
+      "Resubscribe after reconnecting and use count versions to avoid regressing the display"
+    ],
+    "nonFunctional": [
+      "Support ~100 M concurrent sockets and hot posts with millions of viewers",
+      "Keep count updates eventually consistent and bounded in frequency",
+      "Survive a WebSocket Server or Stream Processor instance failure with reconnect and replay"
+    ],
+    "constraints": [
+      "Never connect the like API directly to WebSocket Servers",
+      "All Stream Processor to WebSocket Server paths must pass through Pub/Sub",
+      "Connect WebSocket Servers to Pub/Sub; publish coalesced count snapshots rather than every like",
+      "Preserve unique like records and idempotent counter batches; replicate the event log and durable stores"
+    ],
+    "budgetPerHr": 6.5,
+    "latencyTargetMs": 130,
+    "capacity": [
+      "~100 M connections / ~100 K per socket server ≈1,000 servers",
+      "Millions of simultaneous viewers on one hot post; coalesce ~1–2 s windows and cap each post near 1 update/s",
+      "Inherited write load: ~5 B likes/day ≈58 K/s average, ~500 K/s peak; a hot post can receive ~10 K likes/s"
+    ],
+    "tradeoff": "Coalesced count snapshots reduce publish and rendering work but add a second or two of staleness. Topic subscriptions avoid broadcasting irrelevant posts, at the cost of subscription churn as users scroll. Pub/Sub decouples writers from socket placement; reconnection still needs a fresh count and resubscription.",
+    "bonus": "Connect WebSocket Servers → Cache for the current count on subscription and add Monitoring for socket churn and update freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route like API requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance like API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Persist unique like records" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append like transitions to the log" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Aggregate post counters from the log" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "nosql-database", "label": "Apply batched counter writes" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Refresh cached counts" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read counts for the HTTP API" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "client", "toComponentId": "websocket-server", "label": "Subscribe sockets to on-screen posts" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "pub-sub", "label": "Publish coalesced per-post counts" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Fan counts out to socket subscribers" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "cache", "label": "Load the current count on subscription", "bonus": true },
+    { "id": "m13", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for live count freshness", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "websocket-server",
+      "message": "Don't have the like API call socket servers — publish once and let Pub/Sub fan out."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "pub-sub",
+      "fromComponentId": "stream-processor",
+      "toComponentId": "websocket-server",
+      "message": "Deliver aggregated counts through Pub/Sub before reaching WebSocket Servers."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "websocket-server",
+      "message": "Run at least two WebSocket Servers so clients can reconnect after a failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors for count aggregation."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "websocket-server",
+      "companionComponentId": "pub-sub",
+      "message": "Connect WebSocket Servers to Pub/Sub for per-post fan-out."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "websocket-server", "nosql-database", "message-queue", "cache", "monitoring", "stream-processor", "pub-sub"],
+  "hints": [
+    "Rebuild level-33: Client → Load Balancer → Web Server, then Web Server → NoSQL, → Cache and → Message Queue → Stream Processor. Connect the processor to NoSQL and Cache for batched counts.",
+    "Add Client → WebSocket Server for subscriptions. Publish coalesced counts with Stream Processor → Pub/Sub → WebSocket Server; do not wire the like API to sockets.",
+    "Use two Web Servers, two Stream Processors and two WebSocket Servers. Both processors reach NoSQL, Cache and Pub/Sub; Pub/Sub reaches both socket servers. Each Web Server reaches NoSQL, the queue, Cache and Monitoring. Add each WebSocket Server → Cache for the initial count."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-facebook-likes-feature-with-live-updates",
+  "tips": [
+    "Related to the Facebook Likes counter question, but with live updates as an addition.",
+    "How will you push live updates to millions of users?"
+  ],
+  "resources": [
+    {
+      "title": "Video Solution",
+      "url": "https://www.youtube.com/watch?v=T4bmFz-BSDk",
+      "kind": "video"
+    }
+  ]
+}

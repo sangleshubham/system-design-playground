@@ -1,0 +1,98 @@
+{
+  "id": "level-32",
+  "actId": "act-6",
+  "order": 32,
+  "title": "Who's Viewing This Page",
+  "difficulty": "easy",
+  "summary": "Count distinct recent page viewers with expiring presence state and geographically local heartbeats.",
+  "narrative": "Design a system that lets users know the number of other users currently viewing a page, such as a hotel site showing '12 people are looking at this hotel'. Here, 'current' means active within the last 5 minutes, so a closed tab may linger until that window expires. Send a heartbeat on page open and every ~30 s while it remains open. Use a stable user id, or an anonymous session id, so reloading does not count the same viewer twice; subtract the caller's own membership when displaying other viewers.\n\nAt ~5 M concurrent viewers across ~10 M pages, heartbeats generate ~5 M / 30 ≈ 170 K updates/s. At ~50 B per entry, 5 M entries occupy ~250 MB before sorted-set overhead and replication; recently departed viewers add state within the 5-minute window. Geo-route clients with DNS to the nearest region, then balance heartbeats across redundant Web Servers. In Cache, update a per-page sorted set with ZADD page:{id} now userOrSessionId, trim scores at or before now minus 5 minutes with ZREMRANGEBYSCORE, and return ZCARD in the heartbeat response. Execute update, trim and count atomically for a coherent local result; expire abandoned page keys with a TTL.\n\nKeep presence entirely in geographically replicated caches; long-term view analytics belongs to a separate system. Replicate each region's presence cache so one node failure does not erase every count. Merge regional counts asynchronously; geo-routing keeps each viewer in one region, so summing regional counts (or merging HyperLogLogs) rarely double counts, and a few seconds of staleness or a slightly incorrect count is acceptable. For very hot pages, merge minute-bucket HyperLogLogs for an approximate distinct count with bounded window-boundary error. Optionally push count changes through WebSocket Servers reading the same caches, and monitor heartbeat failures and stale counts.",
+  "objectives": ["Distinct recent viewers", "Timestamp expiry & TTL", "Geographic presence", "Approximate hot-page counts"],
+  "specs": {
+    "functional": [
+      "Send a heartbeat on open and every ~30 s; return the recent viewer count in each response",
+      "Maintain per-page sorted sets of stable user/session ids and last-seen timestamps in Cache",
+      "Atomically refresh membership, trim entries older than the 5-minute window and count remaining viewers",
+      "Exclude the caller's own membership from the displayed number of other viewers; expire abandoned page keys",
+      "Geo-route users and merge regional counts asynchronously with identity-aware deduplication"
+    ],
+    "nonFunctional": [
+      "Sustain ≈170 K heartbeat updates/s across regions",
+      "Tolerate brief staleness and approximate global counts",
+      "Survive one Web Server or presence Cache node failure"
+    ],
+    "constraints": [
+      "Keep heartbeat presence ephemeral in Cache; do not write it to SQL or NoSQL",
+      "Use stable viewer identities across reloads and trim individual timestamps; a key TTL alone does not expire members",
+      "Keep durable view analytics separate from this presence service"
+    ],
+    "budgetPerHr": 3.0,
+    "latencyTargetMs": 100,
+    "capacity": [
+      "~5 M concurrent viewers across ~10 M pages; ~30 s heartbeat interval → ≈170 K updates/s",
+      "~50 B per entry × 5 M entries ≈250 MB before overhead and replicas; the 5-minute tail adds recently departed viewers",
+      "Presence window: 5 min; asynchronously merged counts may be stale for a few seconds"
+    ],
+    "tradeoff": "Sorted sets retain viewer identities for deduplication and a precise local time window at a memory cost. Minute-bucket HyperLogLogs bound memory on hot pages but estimate distinct viewers and introduce bucket-boundary error. Regional caches reduce heartbeat latency while asynchronous merging weakens global freshness.",
+    "bonus": "Connect Client → WebSocket Server → Cache for pushed count changes, and add Monitoring for heartbeat failures and presence freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "dns", "label": "Geo-route viewers with DNS" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route heartbeats through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance presence API requests" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Refresh timestamped viewer sets in Cache" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "client", "toComponentId": "websocket-server", "label": "Open a WebSocket for count changes", "bonus": true },
+    { "id": "m6", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "cache", "label": "Read presence counts from Cache", "bonus": true },
+    { "id": "m7", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for presence freshness", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "sql-database",
+      "message": "Presence is ephemeral — don't write every heartbeat to a database; keep it in the cache with a TTL."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "nosql-database",
+      "message": "Presence is ephemeral — don't write every heartbeat to a database; keep it in the cache with a TTL."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so heartbeats survive an instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "cache",
+      "message": "Replicate the presence cache so one node failure doesn't zero every count."
+    }
+  ],
+  "recommendedComponentIds": ["client", "dns", "load-balancer", "web-server", "cache", "monitoring", "websocket-server"],
+  "hints": [
+    "Start with Client → DNS for regional routing and Client → Load Balancer → Web Server for heartbeats. Use stable viewer ids and a 5-minute last-seen window.",
+    "Connect Web Server → Cache for per-page sorted sets. Atomically refresh a timestamp, trim expired members and count; add key TTLs for abandoned pages. Keep heartbeat writes out of databases.",
+    "Run two Web Servers and two Cache nodes; connect each Web Server to both caches. For push, add Client → WebSocket Server and WebSocket Server → both caches. Connect each Web Server → Monitoring. The heartbeat response still supports pull counts."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-feature-to-show-the-number-of-users-viewing-a-page",
+  "tips": [
+    "A simple distributed key-value cache (accommodation_id → count) with an increment is a start, but \"current\" viewers means views within the last 5 minutes, so counts must also go down.",
+    "Store user ids with timestamps rather than a bare counter, so a user who keeps reloading the page is not counted twice; entries older than 5 minutes must drop out of the count.",
+    "Replicate the cache geographically; consistency is not a requirement, and a slightly incorrect count can be tolerated for a short time.",
+    "Persistent storage is probably unnecessary: the counts are temporary, and long-term view tracking belongs to a separate system."
+  ],
+  "resources": [
+    {
+      "title": "One solution",
+      "url": "https://medium.com/%40narasimha4789/from-zero-to-millions-designing-a-real-time-active-user-counter-system-a5d9545bd35e",
+      "kind": "article"
+    },
+    {
+      "title": "Related",
+      "url": "https://www.youtube.com/watch?v=TuKjdj9YXns",
+      "kind": "video"
+    }
+  ]
+}

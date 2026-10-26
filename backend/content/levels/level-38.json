@@ -1,0 +1,104 @@
+{
+  "id": "level-38",
+  "actId": "act-6",
+  "order": 38,
+  "title": "Netflix Screen Limit",
+  "difficulty": "hard",
+  "summary": "Enforce account-wide concurrent playback limits with atomic expiring stream leases and separate video delivery.",
+  "narrative": "Enforce a streaming plan's concurrent screen limit: Basic allows 1 stream, Standard 2 and Premium 4. Starting playback beyond the limit must return 'too many people are using your account'. A stopped stream or crashed device should free its slot within ~2 minutes. Every play request passes through the playback/licence API and Auth Service to verify account and device. Apps supply a registered device id; web players use a browser-session id plus IP as context, since shared or changing IP addresses are not reliable device identities.\n\nKeep plan limits and registered devices in SQL. Shard stream leases in Cache by account id, with one authoritative home region per account. An atomic script drops expired leases, refreshes an existing device/session lease or checks size < maxStreams before adding a new one, and sets ~2 min expiry in the same operation. Two devices racing for the last slot must serialize on that account key. Players heartbeat every ~60 s to renew and explicitly release on stop; distinguish concurrent player sessions on the same device. Tie playback authorisation to the lease lifetime so a player without renewal cannot keep streaming after its slot expires. At ~250 M accounts and ~50 M concurrent streams, renewals are ~50 M / 60 ≈ 830 K writes/s, with ~50 K play starts/s at peak.\n\nReplicate the lease cache, but keep a single fenced writer for each account shard: replicas are not independent admission authorities. Refuse or retry starts when authority is uncertain; asynchronous replication alone cannot guarantee strict limits during failover, so reconcile leases before admitting again. A cross-region lease check costs ~100 ms at play start; renewals stay routed to that account's home authority. Serve video segments from the CDN so only licence and lease calls hit the API. Queue start/stop events for Workers to write NoSQL session history, audit and account-sharing analytics; this history does not decide admission. Optionally connect the CDN to Blob Storage as its video origin and monitor lease failures and rejected starts.",
+  "objectives": ["Atomic stream admission", "Expiring device/session leases", "Account home-region authority", "Separate video & audit paths"],
+  "specs": {
+    "functional": [
+      "Authenticate account and device on playback/licence requests and load plan limits from SQL",
+      "Atomically expire old leases, renew an existing session or admit a new one only below the plan limit",
+      "Renew leases every ~60 s, release on stop and reclaim crashed sessions within ~2 min",
+      "Serve video segments from CDN independently of the playback API",
+      "Queue start/stop events for Workers to persist NoSQL session history and audit"
+    ],
+    "nonFunctional": [
+      "Support ~250 M accounts, ~50 M concurrent streams and ~50 K peak play starts/s",
+      "Sustain ≈830 K lease renewals/s with sharding by account id",
+      "Survive an API or cache node failure without allowing independent writers for the same account",
+      "Accept ~100 ms cross-region lease lookup at play start when away from the home region"
+    ],
+    "constraints": [
+      "Clients must never access Cache directly; all Client-to-Cache paths pass through Web Servers",
+      "Use one authoritative home region and atomic admission per account; fence old writers before promotion",
+      "Replicated caches must not independently grant the last slot; refuse or retry admission while authority is uncertain",
+      "Connect the event queue to a Worker; use durable history for audit rather than live admission",
+      "Use device/session identity rather than IP alone, and expire individual leases rather than only the account key",
+      "Limit playback authorisation to the lease lifetime; stop playback when renewal fails past expiry"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 130,
+    "capacity": [
+      "Basic: 1 stream; Standard: 2; Premium: 4; ~250 M accounts",
+      "~50 M concurrent streams / 60 s ≈830 K renewal writes/s; ~50 K play starts/s peak",
+      "~2 min lease expiry; ~60 s heartbeat; ~100 ms cross-region home-authority check at play start"
+    ],
+    "tradeoff": "A single account authority makes atomic slot decisions possible at the cost of cross-region start latency and reduced availability during uncertain failover. Short leases reclaim crashed streams quickly but can interrupt playback during network outages. Replication improves recovery, while fencing and reconciliation are needed to avoid over-admission.",
+    "bonus": "Connect CDN → Blob Storage as the video origin and add Monitoring for lease renewal failures and rejected playback starts."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Fetch video segments from the CDN" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route playback requests through the Load Balancer" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance playback and licence API requests" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "auth-service", "label": "Verify the account and device" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Read plan limits and registered devices" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Acquire and renew atomic stream leases" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append playback start and stop events" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch playback events to a Worker" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "nosql-database", "label": "Store session history in NoSQL" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Fetch origin video from Blob Storage", "bonus": true },
+    { "id": "m11", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for stream lease failures", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "cache",
+      "message": "Clients acquire leases through the playback API, never directly from Cache."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "web-server",
+      "fromComponentId": "client",
+      "toComponentId": "cache",
+      "message": "All stream lease access must pass through the Web Server playback API."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so playback admission survives one instance failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "cache",
+      "message": "The lease store is on every play path — replicate it with one authority per account shard."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "message-queue",
+      "companionComponentId": "worker",
+      "message": "Connect the playback event queue to a Worker for session history."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "blob-storage", "load-balancer", "web-server", "auth-service", "sql-database", "cache", "message-queue", "monitoring", "worker", "nosql-database"],
+  "hints": [
+    "Separate video from control calls: Client → CDN for segments and Client → Load Balancer → Web Server for play requests. Connect Web Server → Auth Service and → SQL for account/device checks and plan limits.",
+    "Connect Web Server → Cache for atomic per-account leases. Expire old sessions before checking the limit, renew every ~60 s and keep one home-region authority. Add Web Server → Message Queue → Worker → NoSQL for history.",
+    "Use two Web Servers and two Cache nodes; each Web Server reaches Auth Service, SQL, both caches, the queue and Monitoring. Keep the replicas under one fenced writer per shard. Wire Message Queue → Worker → NoSQL, and CDN → Blob Storage for the video-origin bonus."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/netflix-limit-the-number-of-screens-each-user-can-watch",
+  "tips": [
+    "How do you identify each device?",
+    "Once you do, how do you keep track of the number of users watching it?",
+    "How do you scale this at a global level - with millions of users watching at once?",
+    "On mobile and TVs you run the app, so you have access to device identifiers (for example the phone model and the advertising identifier on iOS) and can record each device in a backend cache.",
+    "On the web, you can use the IP address and create a browser session, and use that as the key in a table maintaining sessions for a user.",
+    "Combining the above, you can tell how many people are watching from an account at any given time."
+  ],
+  "resources": []
+}

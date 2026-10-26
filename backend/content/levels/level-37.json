@@ -1,0 +1,110 @@
+{
+  "id": "level-37",
+  "actId": "act-6",
+  "order": 37,
+  "title": "Price Alerts",
+  "difficulty": "easy",
+  "summary": "Schedule polite product-page scraping and evaluate durable price rules with idempotent alert delivery.",
+  "narrative": "Let users watch Amazon products and create alerts such as 'price ≤ $X', 'drops by ≥ 10 %' or 'back in stock', delivered by email or push once per crossing. There is no price API, so scrape retailer product pages; the Third-Party API here represents the retailer website. Store ~200 M alert rules for ~20 M users with ~10 alerts each in SQL, indexed by product id. With ~50 M watched products fetched on average every 6 h, plan for ~50 M / 21,600 ≈ 2.3 K fetches/s and a few million fired alerts/day.\n\nThe watch API registers a product with the Task Scheduler when its first alert is created. Schedule popular or heavily watched products more often, such as hourly versus daily, then enqueue crawl jobs in the Message Queue. Redundant scraper Workers fetch pages politely with per-retailer rate limits, backoff and a rotating schedule. Extract prices from structured JSON-LD or meta tags first, falling back to versioned CSS-selector parsers. Detect parsing failures and never treat a missing or malformed price as a price drop; operational alerts tell the team when parsers need repair. Optional raw HTML snapshots in Blob Storage allow re-extraction after layout changes.\n\nAppend valid prices to the Time-Series Database and compare each change with indexed SQL rules. Store the reference price for percentage-drop rules and the previous satisfied state for each rule; mark a crossing fired idempotently, and re-arm only after the condition becomes false. Persist a delivery intent keyed by alert and crossing in SQL so a retry after a crash can safely resume the Notification Service call. Use the same delivery key on retries; external email/push delivery still depends on provider deduplication. Scraping and user notifications stay in Workers, away from the request path. Optional Monitoring tracks parse-failure rates and stale products.",
+  "objectives": ["Adaptive polite scraping", "Resilient price extraction", "Rule crossings & re-arming", "Idempotent notification intent"],
+  "specs": {
+    "functional": [
+      "Store price-threshold, percentage-drop and back-in-stock rules in SQL indexed by product id",
+      "Register new watched products and enqueue crawls at per-product frequencies",
+      "Fetch retailer pages in Workers; prefer structured data and fall back to versioned CSS selectors",
+      "Append valid price history, evaluate changed products and record one fired state per rule crossing",
+      "Retry durable notification intents with stable delivery keys and re-arm after a condition becomes false"
+    ],
+    "nonFunctional": [
+      "Sustain ≈2.3 K average page fetches/s across ~50 M watched products",
+      "Support ~200 M rules and a few million fired alerts/day",
+      "Continue crawling after one Worker failure; measure parsing failures and alert the operations team"
+    ],
+    "constraints": [
+      "Never scrape retailer pages from the Web Server request path",
+      "Send user alerts from Workers, never directly from Web Servers",
+      "Connect the Task Scheduler to the Message Queue for crawl dispatch",
+      "Respect retailer rate limits and backoff; reject malformed extractions instead of firing false price alerts",
+      "Use SQL conditional state changes and stable delivery intents to avoid duplicate logical firings"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 330,
+    "capacity": [
+      "~50 M products / (6 × 3,600 s) ≈2.3 K fetches/s on average",
+      "~20 M users × ~10 alerts/user = ~200 M alert rules",
+      "Popular products may be crawled hourly, less popular ones daily; a few million fired alerts/day"
+    ],
+    "tradeoff": "Adaptive polling spends more fetch capacity on popular products but cannot detect every short-lived price between polls. Structured-data-first parsing reduces dependence on page layout; selector versions and parse-failure alerts are still needed. Durable crossing state and delivery intent prevent repeated logical firings, while provider behavior bounds duplicate external deliveries.",
+    "bonus": "Connect Worker → Blob Storage for raw HTML snapshots and re-parsing, and add Monitoring for parse-failure rates and stale products."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route watch requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance alert API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store product alert rules in SQL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Register products for scheduled crawls" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "message-queue", "label": "Enqueue product crawl jobs" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch crawls to scraper Workers" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "external-api", "label": "Fetch retailer product pages" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "timeseries-db", "label": "Append extracted price history" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Match rules and mark crossings fired" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "notification-service", "label": "Deliver price alerts by email or push" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "blob-storage", "label": "Archive raw HTML for re-parsing", "bonus": true },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for parse failures", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "external-api",
+      "message": "Never scrape on the request path; Workers fetch product pages."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "notification-service",
+      "message": "Alerts fire from the pipeline, not the request path."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two scraper Workers so crawling survives an instance failure."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "message-queue",
+      "message": "Connect the Task Scheduler to the Message Queue for durable crawl jobs."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "sql-database", "task-scheduler", "monitoring", "message-queue", "worker", "external-api", "timeseries-db", "notification-service", "blob-storage"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Store indexed alert rules with Web Server → SQL and register watched products with Web Server → Task Scheduler.",
+    "Wire Task Scheduler → Message Queue → Worker → Third-Party API for scheduled scraping. Connect Worker → Time-Series Database for history, → SQL for crossing state and → Notification Service for email/push.",
+    "Run two Web Servers and two Workers. Each Web Server reaches SQL, Task Scheduler and Monitoring; the scheduler feeds the queue and the queue feeds both Workers. Each Worker reaches the retailer, Time-Series Database, SQL, Notification Service and Blob Storage for raw HTML. Persist delivery intent before retrying a crossing notification."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-a-price-alert-system-for-amazon-or-stock-prices",
+  "tips": [
+    "How will you scrape the data, if there is no API?",
+    "What constitutes a price alert? Are there any rules a user can add - rule based alerts?",
+    "How do you maintain the scraped data even if the html changes?"
+  ],
+  "resources": [
+    {
+      "title": "Leetcode Discussion",
+      "url": "https://leetcode.com/discuss/interview-question/system-design/5745135/Design-Stock-price-Notification-System",
+      "kind": "discussion"
+    },
+    {
+      "title": "Good solutions",
+      "url": "https://dilipkumar.medium.com/price-drop-tracker-system-design-d2f9ed36a935",
+      "kind": "article"
+    },
+    {
+      "title": "Another solution",
+      "url": "https://www.tryexponent.com/questions/3371/design-amazon-price-tracker",
+      "kind": "article"
+    }
+  ]
+}

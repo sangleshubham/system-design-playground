@@ -1,0 +1,34 @@
+{
+  "nodes": [
+    { "id": "client", "componentId": "client", "displayName": "Client", "note": "", "x": 0, "y": 0 },
+    { "id": "load-balancer", "componentId": "load-balancer", "displayName": "Load Balancer", "note": "", "x": 220, "y": 0 },
+    { "id": "web-server1", "componentId": "web-server", "displayName": "Web Server 1", "note": "", "x": 440, "y": 0 },
+    { "id": "web-server2", "componentId": "web-server", "displayName": "Web Server 2", "note": "", "x": 440, "y": 140 },
+    { "id": "websocket-server1", "componentId": "websocket-server", "displayName": "WebSocket Server 1", "note": "", "x": 660, "y": 0 },
+    { "id": "websocket-server2", "componentId": "websocket-server", "displayName": "WebSocket Server 2", "note": "", "x": 660, "y": 140 },
+    { "id": "nosql-database", "componentId": "nosql-database", "displayName": "NoSQL Database", "note": "", "x": 880, "y": 0 },
+    { "id": "pub-sub", "componentId": "pub-sub", "displayName": "Pub/Sub", "note": "", "x": 1100, "y": 0 },
+    { "id": "cache", "componentId": "cache", "displayName": "Cache", "note": "", "x": 1320, "y": 0 },
+    { "id": "rate-limiter", "componentId": "rate-limiter", "displayName": "Rate Limiter", "note": "", "x": 1540, "y": 0 },
+    { "id": "monitoring", "componentId": "monitoring", "displayName": "Monitoring & Alerting", "note": "", "x": 1760, "y": 0 }
+  ],
+  "edges": [
+    { "id": "client-load-balancer", "sourceNodeId": "client", "targetNodeId": "load-balancer" },
+    { "id": "load-balancer-web-server1", "sourceNodeId": "load-balancer", "targetNodeId": "web-server1" },
+    { "id": "load-balancer-web-server2", "sourceNodeId": "load-balancer", "targetNodeId": "web-server2" },
+    { "id": "load-balancer-websocket-server1", "sourceNodeId": "load-balancer", "targetNodeId": "websocket-server1" },
+    { "id": "load-balancer-websocket-server2", "sourceNodeId": "load-balancer", "targetNodeId": "websocket-server2" },
+    { "id": "web-server1-nosql-database", "sourceNodeId": "web-server1", "targetNodeId": "nosql-database" },
+    { "id": "web-server2-nosql-database", "sourceNodeId": "web-server2", "targetNodeId": "nosql-database" },
+    { "id": "web-server1-pub-sub", "sourceNodeId": "web-server1", "targetNodeId": "pub-sub" },
+    { "id": "web-server2-pub-sub", "sourceNodeId": "web-server2", "targetNodeId": "pub-sub" },
+    { "id": "web-server1-cache", "sourceNodeId": "web-server1", "targetNodeId": "cache" },
+    { "id": "web-server2-cache", "sourceNodeId": "web-server2", "targetNodeId": "cache" },
+    { "id": "web-server1-rate-limiter", "sourceNodeId": "web-server1", "targetNodeId": "rate-limiter" },
+    { "id": "web-server2-rate-limiter", "sourceNodeId": "web-server2", "targetNodeId": "rate-limiter" },
+    { "id": "web-server1-monitoring", "sourceNodeId": "web-server1", "targetNodeId": "monitoring" },
+    { "id": "web-server2-monitoring", "sourceNodeId": "web-server2", "targetNodeId": "monitoring" },
+    { "id": "pub-sub-websocket-server1", "sourceNodeId": "pub-sub", "targetNodeId": "websocket-server1" },
+    { "id": "pub-sub-websocket-server2", "sourceNodeId": "pub-sub", "targetNodeId": "websocket-server2" }
+  ]
+}

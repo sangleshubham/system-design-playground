@@ -1,0 +1,119 @@
+{
+  "id": "level-33",
+  "actId": "act-6",
+  "order": 33,
+  "title": "Facebook Like Counter",
+  "difficulty": "medium",
+  "summary": "Persist unique likes and batch celebrity-post counter updates through a replicated event log and cache.",
+  "narrative": "Build Facebook's like counter for ordinary posts and celebrity posts that receive ~1 M likes in a few minutes, or 5–10 K/s on one key. A like conditionally inserts a NoSQL record keyed by (post_id, user_id); unlike logically deletes it, and 'did I like this?' is a point read. Repeated requests must not create extra likes. Serve counts from Cache with eventual consistency, rather than scanning records with COUNT(*) on every feed impression.\n\nExpect ~5 B likes/day ≈ 58 K/s on average and ~500 K/s at peak. Count reads are ~100× writes, reaching millions/s. The Web Servers persist effective like/unlike transitions and append events to a replicated Message Queue log partitioned by post id. Stream Processors aggregate deltas in ~1 s windows and apply a batched count += n per post per window: ~10 K likes/s becomes ~1 counter write/s for that post. For extreme keys, spread writes across N sub-counters and sum them on read, then refresh cached counts.\n\nReplicate the log and NoSQL like records/counter rows with RF = 3, and run redundant Web Servers and Stream Processors. Give each effective transition a stable event id and sequence, retain pending publication intent with the versioned like state (including unlike tombstones until publication), and retry log publication after partial failures. Apply each batch idempotently with an atomic counter update and batch marker before committing its offset, so replay does not apply a delta twice. Rebuild damaged counts by replaying the retained log or recounting durable like records. Optionally fill missing cached counts from NoSQL and monitor aggregation lag; clients always access records and counts through the app.",
+  "objectives": ["Conditional like records", "Hot-key batching", "Replicated counter recovery", "Cached eventual counts"],
+  "specs": {
+    "functional": [
+      "Conditionally insert one like per (post_id, user_id), delete on unlike and support a point read for own-like state",
+      "Publish effective like/unlike transitions to a log partitioned by post id with retryable publication intent",
+      "Aggregate ~1 s windows and apply idempotent counter batches in NoSQL before committing offsets",
+      "Serve current counts from Cache and rebuild them by log replay or recounting records",
+      "Shard extreme hot-post counters into N sub-counters and sum on read"
+    ],
+    "nonFunctional": [
+      "Handle ~58 K likes/s average and ~500 K/s peak with millions of count reads/s",
+      "Allow eventual count convergence while preserving unique durable like records",
+      "Replicate the log and durable records with RF = 3; tolerate an API or processor instance failure"
+    ],
+    "constraints": [
+      "Clients must never access NoSQL or Cache directly",
+      "Route Web Server to Stream Processor paths through the Message Queue",
+      "Do not compute feed counts by COUNT(*) or increment one contended counter for every hot-post event",
+      "Deduplicate event/batch identities and preserve effective transition ordering during retries"
+    ],
+    "budgetPerHr": 5.5,
+    "latencyTargetMs": 120,
+    "capacity": [
+      "~5 B likes/day / 86,400 ≈58 K/s average; ~500 K/s peak",
+      "~1 M likes in a few minutes on a celebrity post → 5–10 K/s on one key",
+      "~100× as many count reads as writes → millions/s; ~1 s batching reduces 10 K hot-key events/s to ~1 counter write/s before extra sharding"
+    ],
+    "tradeoff": "Batched, cached counts trade immediate accuracy for much lower counter contention. Sharded sub-counters spread extreme keys further but increase read and recovery work. Durable like records remain the source for unique membership; replay requires publication repair and idempotent batch application.",
+    "bonus": "Connect Cache → NoSQL Database to fill missing counts and add Monitoring for publication failures, counter drift and aggregation lag."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route like requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance like API requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "nosql-database", "label": "Persist conditional like records in NoSQL" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append like transitions to the event log" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Batch events by post in Stream Processors" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "nosql-database", "label": "Apply batched counter updates in NoSQL" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Refresh cached post counts" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read counts from Cache" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "cache", "toComponentId": "nosql-database", "label": "Fill missing cached counts from NoSQL", "bonus": true },
+    { "id": "m10", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for counter lag and drift", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "nosql-database",
+      "message": "Clients access like records through the API, never directly from NoSQL."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "cache",
+      "message": "Clients read counts through the API, never directly from Cache."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Buffer like transitions in the Message Queue before stream aggregation."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers for the like API."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors so aggregation survives one failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "nosql-database",
+      "message": "Replicate the counters and like records across NoSQL nodes."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "nosql-database", "message-queue", "cache", "monitoring", "stream-processor"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → NoSQL for conditional like records and → Cache for count reads; keep clients away from both stores.",
+    "Add Web Server → Message Queue → Stream Processor. Partition by post id, aggregate ~1 s windows and connect Stream Processor → NoSQL and → Cache. Make batch application idempotent before committing offsets.",
+    "Use two Web Servers, two Stream Processors and two NoSQL nodes. Each Web Server reaches both NoSQL nodes, the queue and Cache; the queue feeds both processors, each reaching both NoSQL nodes and Cache. Add Cache → both NoSQL nodes and each Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/count-facebook-likes-especially-for-popular-users",
+  "tips": [
+    "To clarify: what scale are we looking at - what can the peak traffic be?",
+    "This is a distributed counters problem - how will you scale it as the likes grow?",
+    "How will you handle celebrity users, who get a huge number of counts really fast?",
+    "How do you deal with system failures? You will need some replication."
+  ],
+  "resources": [
+    {
+      "title": "Discussion on Blind",
+      "url": "https://www.teamblind.com/post/System-Design-Question-How-does-FBInsta-storeretrieve-likes-NZEcwqVp",
+      "kind": "discussion"
+    },
+    {
+      "title": "Detailed Solution",
+      "url": "https://systemdesign.one/distributed-counter-system-design/",
+      "kind": "article"
+    },
+    {
+      "title": "Video Solution",
+      "url": "https://blog.interviewcamp.io/live-design-facebook-likes-distributed-counter",
+      "kind": "video"
+    }
+  ]
+}

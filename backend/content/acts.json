@@ -28,5 +28,11 @@
     "order": 5,
     "title": "Everyday Products",
     "description": "Weather, parts pickers, wikis, marketplaces, photo libraries, logins and on-call tools — product questions where the data model and APIs matter as much as scale."
+  },
+  {
+    "id": "act-6",
+    "order": 6,
+    "title": "Live Counts & Presence",
+    "description": "Counters, presence and live updates pushed to millions of screens at once."
   }
 ]
