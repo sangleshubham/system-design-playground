@@ -1,0 +1,121 @@
+{
+  "id": "level-40",
+  "actId": "act-7",
+  "order": 40,
+  "title": "ETA & Live Location Sharing",
+  "difficulty": "expert",
+  "summary": "Share live driver positions with riders and combine road routing, traffic speeds and historical trips for ETA prediction.",
+  "narrative": "A driver has already been matched: show the rider the driver moving on the map, an ETA to pickup and an ETA to destination that adapts to traffic. The Client is both apps. ~5 M online drivers send a GPS fix every 2–4 s; sizing at one ping per 4 s gives ~1.25 M pings/s, with ~2 M trips in progress at peak. Driver locations should reach riders end-to-end in < 1 s; ~100 K ETA requests/s on app opens and re-routes need p99 < 200 ms.\n\nBoth apps connect through a Load Balancer to redundant WebSocket Servers. Drivers push fixes over persistent sockets rather than polling. The receiving server publishes to the trip's Pub/Sub channel, and the server holding the rider's socket delivers the update. Socket servers deliver updates received from Pub/Sub to their local clients and never republish them. Authorize trip subscriptions, carry sequence numbers and timestamps, and discard stale fixes. Publish the same pings to a Message Queue; a Stream Processor map-matches them to road segments, aggregates live travel speeds and writes a segment-speed Cache. Optional Blob Storage archives the queue's pings and trip records for offline training.\n\nThe Load Balancer also routes ETA requests to redundant Web Servers. The Graph Database holds the road graph: intersections are nodes and road segments are edges weighted by travel time. A routing engine uses Dijkstra/A* with contraction hierarchies for faster routing; a customizable variant applies the current cached segment speeds as live weights without full re-preprocessing. An ML Model Server corrects residual routing error using a model trained offline on past trips, time of day, weather, pickup/drop-off patterns and the routing ETA itself. Return pickup and destination estimates, fall back to the road graph's typical travel-time weights when live data is stale, and recalculate on re-route or traffic change. Optional Monitoring tracks location freshness and ETA error.",
+  "objectives": ["Trip-channel fan-out", "Road graph routing", "Live traffic aggregation", "Historical ETA correction"],
+  "specs": {
+    "functional": [
+      "Push driver GPS fixes every 2–4 s and deliver authorized trip updates through Pub/Sub to rider sockets",
+      "Stream GPS pings into per-road-segment speed estimates in Cache",
+      "Route on a road graph with Dijkstra/A* and contraction hierarchies using current travel-time weights",
+      "Correct routing ETA with a model trained on past trips, time, weather and pickup/drop-off patterns",
+      "Return ETA to pickup and destination on app open, re-route and relevant traffic changes"
+    ],
+    "nonFunctional": [
+      "Deliver live locations end-to-end in < 1 s and serve ~100 K ETA requests/s with p99 < 200 ms",
+      "Support ~2 M concurrent trips and ~1.25 M pings/s at one ping per 4 s",
+      "Survive a WebSocket Server or ETA Web Server failure; reject stale and unauthorized location updates"
+    ],
+    "constraints": [
+      "Clients must never access the road Graph Database or ML Model Server directly",
+      "Connect the Stream Processor to Cache for segment speeds; fall back to the road graph's typical travel-time weights when live samples expire",
+      "Use persistent push connections and authorized per-trip subscriptions; do not echo Pub/Sub deliveries back into the channel"
+    ],
+    "budgetPerHr": 7.0,
+    "latencyTargetMs": 120,
+    "capacity": [
+      "~5 M online drivers × 1 ping / 4 s ≈ 1.25 M pings/s; device cadence 2–4 s",
+      "~2 M trips in progress at peak; driver-to-rider location delivery < 1 s",
+      "~100 K ETA requests/s; ETA API p99 < 200 ms"
+    ],
+    "tradeoff": "Persistent push avoids polling delay but requires socket routing, reconnection and subscription recovery. Graph routing explains the route while historical ML corrects systematic error; fresh traffic helps accuracy but sparse segments need historical fallbacks and models can drift.",
+    "bonus": "Connect Message Queue → Blob Storage to archive pings and trips for offline training, and add Monitoring for ETA error and delivery freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route app traffic through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "websocket-server", "label": "Balance persistent app connections" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "pub-sub", "label": "Publish locations to trip channels" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "pub-sub", "toComponentId": "websocket-server", "label": "Deliver updates to rider socket servers" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "websocket-server", "toComponentId": "message-queue", "label": "Append GPS pings to the stream" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Aggregate live road segment speeds" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Cache speed estimates by road segment" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance ETA API requests" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "graph-database", "label": "Route through the road graph" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read live segment speeds" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "ml-model-server", "label": "Correct ETA with historical trip predictions" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "blob-storage", "label": "Archive pings and trips for training", "bonus": true },
+    { "id": "m13", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for service health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "graph-database",
+      "message": "Apps request routes through the ETA API, never directly from the Graph Database."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "ml-model-server",
+      "message": "Apps request ETA predictions through the API, never directly from the ML Model Server."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "websocket-server",
+      "message": "Run at least two WebSocket Servers so one failure does not stop live sharing."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers to keep the ETA API available."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "stream-processor",
+      "companionComponentId": "cache",
+      "message": "Connect the Stream Processor to Cache to publish live segment speeds."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "websocket-server", "web-server", "pub-sub", "message-queue", "stream-processor", "blob-storage", "cache", "graph-database", "ml-model-server", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → WebSocket Server. Connect WebSocket Server → Pub/Sub and Pub/Sub → WebSocket Server for trip-channel fan-out, without republishing received updates.",
+    "Add WebSocket Server → Message Queue → Stream Processor → Cache for live segment speeds. Add Load Balancer → Web Server, then Web Server → Graph Database, → Cache and → ML Model Server for routing and ETA correction.",
+    "Run two WebSocket Servers and two Web Servers behind the Load Balancer. Each socket server publishes to Pub/Sub and the queue; Pub/Sub delivers to both socket servers. Keep the speed-processing branch, add Message Queue → Blob Storage, and wire each Web Server to the graph, Cache, model server and Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-eta-and-location-sharing-between-uber-driver-and-rider",
+  "tips": [
+    "How can you utilize past rides data for calculating the ETA?",
+    "How can you estimate an ETA directly from maps data?",
+    "What if you have your own maps modeled as graphs? How can you calculate ETA there?",
+    "For live location sharing, how do you update the location from the driver's device? Will you use push or pull?",
+    "How can you transmit location updates fast to the other user?"
+  ],
+  "resources": [
+    {
+      "title": "ETA prediction (ML system design, Uber Eats-related)",
+      "url": "https://mecha-mind.medium.com/ml-system-design-eta-prediction-9dc8000fd86b",
+      "kind": "article"
+    },
+    {
+      "title": "Google Maps ETA: high level approach",
+      "url": "https://www.finalroundai.com/interview-questions/google-maps-eta-compute",
+      "kind": "article"
+    },
+    {
+      "title": "Live location tracking: best practices (ok, but not interview depth)",
+      "url": "https://www.linkedin.com/pulse/building-live-location-tracking-app-best-practices-real-time-das-cuujc/",
+      "kind": "article"
+    },
+    {
+      "title": "Location tracking system design on GitHub (ok, but not interview depth)",
+      "url": "https://github.com/praveenkumardec89/location-tracking-system-design",
+      "kind": "article"
+    }
+  ]
+}

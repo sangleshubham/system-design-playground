@@ -1,0 +1,114 @@
+{
+  "id": "level-43",
+  "actId": "act-7",
+  "order": 43,
+  "title": "Ads in the Feed",
+  "difficulty": "expert",
+  "summary": "Select targeted feed ads through predicted-value auctions and measure impressions, clicks and spend asynchronously.",
+  "narrative": "Advertisers create campaigns with budgets, bids, schedules, age/location/interest targeting and creatives; feed slots show auction-selected ads, and advertisers inspect impressions, clicks and spend. The Web Server tier here serves the ads manager API and plays the ad server inside the feed request. Plan for ~2 B users, ~10 M active ads, ~500 K ad requests/s at peak and auction p99 < 100 ms, plus ~1 M impression/click events/s. Campaign definitions live in SQL; creative files live in Blob Storage behind the CDN, outside the auction's data path.\n\nRoute feed and ads manager requests through a Load Balancer to redundant Web Servers. Append campaign changes to Message Queue; a Worker consumes them to build the Search Index's inverted targeting map, attribute value → eligible ads. For each slot, read user features and remaining-budget counters from Cache, retrieve candidates matching the user's demographic and interest predicates, and ask the ML Model Server for each candidate's predicted click probability. Rank by expected value, such as eCPM = bid × pCTR × 1000 plus a quality term. Run a generalized second-price auction: each winner pays the threshold needed to beat the next eligible candidate, adjusted for the ranking model and any reserve. Exclude exhausted, inactive or out-of-schedule campaigns, and pace spend so a daily budget lasts the day.\n\nImpression and click events enter the log with stable event ids. Independent consumers handle campaign indexing and measurement; redundant Stream Processors deduplicate retries, filter invalid traffic, update Cache spend and pacing counters within seconds, and write reporting and billing facts to Data Warehouse. Make spend updates and warehouse writes idempotent across replay. Seconds of counter lag allow bounded overspend, so serving uses conservative remaining-budget headroom or atomic per-campaign reservations rather than promising exact limits from asynchronous counters alone. Advertiser reports run through the analytics pipeline, never a warehouse query while serving an ad. Clients fetch creatives from the CDN, optionally backed by Blob Storage as its origin, and Monitoring tracks auction errors, index freshness and spend lag.",
+  "objectives": ["Demographic targeting index", "Predicted-value ad auctions", "Budget pacing", "Deduplicated measurement"],
+  "specs": {
+    "functional": [
+      "Create campaigns in SQL with budgets, bids, schedules, targeting and creative references",
+      "Consume campaign changes with Workers to build an inverted Search Index of eligible ads",
+      "Read cached user features and budget, retrieve matching candidates and predict pCTR with the ML Model Server",
+      "Rank by eCPM plus quality, run a generalized second-price auction and pace eligible campaigns",
+      "Deduplicate and filter impression/click events, update spend counters and write warehouse reporting and billing facts"
+    ],
+    "nonFunctional": [
+      "Serve ~500 K ad requests/s at peak with auction p99 < 100 ms over ~10 M active ads",
+      "Process ~1 M impression/click events/s and refresh spend counters within seconds",
+      "Survive a Web Server or Stream Processor failure and make replayed spend effects idempotent",
+      "Bound overspend exposure from delayed counters with conservative headroom or atomic per-campaign budget reservations"
+    ],
+    "constraints": [
+      "Clients must never access Search Index directly; Web Servers must never query Data Warehouse while serving an ad",
+      "Connect Search Index to its indexing Worker and separate campaign-indexing consumption from measurement consumption",
+      "Skip exhausted, inactive and out-of-schedule campaigns; combine spend counting with budget pacing",
+      "Keep campaign metadata and spend point lookups in SQL or Cache; keep creative bytes outside the auction path"
+    ],
+    "budgetPerHr": 9.5,
+    "latencyTargetMs": 340,
+    "capacity": [
+      "~2 B users; ~10 M active ads",
+      "~500 K ad requests/s at peak; auction p99 < 100 ms",
+      "~1 M impression/click events/s; spend counters refreshed within seconds"
+    ],
+    "tradeoff": "An asynchronous targeting index and spend pipeline keep auctions fast but introduce eligibility and accounting lag. Pacing and conservative headroom reduce overspend while potentially leaving budget unused; atomic reservations improve enforcement but add contention. Prediction quality affects auction ranking, and generalized second-price pricing depends on the quality-adjusted ranking formula.",
+    "bonus": "Connect CDN → Blob Storage for the creative origin and add Monitoring for auction health, targeting freshness and spend lag."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route feed and ads manager traffic through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance feed and campaign requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store campaigns, budgets and bids" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append campaign and measurement events" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch campaign changes to index Workers" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "search-index", "label": "Build the inverted targeting index" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "search-index", "label": "Retrieve eligible ad candidates" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "ml-model-server", "label": "Predict candidate click probabilities" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read user features and remaining budgets" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Stream deduplicated ad measurement" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Update spend and pacing counters" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "data-warehouse", "label": "Write reporting and billing facts" },
+    { "id": "m13", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Fetch feed creatives from the CDN" },
+    { "id": "m14", "kind": "connect", "fromComponentId": "cdn", "toComponentId": "blob-storage", "label": "Serve creatives from the object origin", "bonus": true },
+    { "id": "m15", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for service health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "search-index",
+      "message": "Clients retrieve eligible ads through the ad server, never directly from Search Index."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "data-warehouse",
+      "message": "Never query the warehouse while serving an ad."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so feed auctions and campaign APIs survive one failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors; if spend counting stops, campaigns can overspend."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "search-index",
+      "companionComponentId": "worker",
+      "message": "Connect Search Index to a Worker that builds targeting entries from campaign changes."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "blob-storage", "load-balancer", "web-server", "sql-database", "message-queue", "worker", "search-index", "ml-model-server", "cache", "stream-processor", "data-warehouse", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → SQL Database for campaigns and → Message Queue for changes and measurement, then Message Queue → Worker → Search Index for targeting.",
+    "Connect Web Server → Search Index, → ML Model Server and → Cache for candidate retrieval, pCTR and budget checks. Add Message Queue → Stream Processor, then Stream Processor → Cache and → Data Warehouse for deduplicated spend and reporting.",
+    "Run two Web Servers and two Stream Processors. Each Web Server reaches SQL, the queue, targeting index, model server and Cache; the queue feeds the Worker and both processors, each connected to Cache and warehouse. Add Client → CDN → Blob Storage and each Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/develop-ads-management-and-display-system-for-social-feed",
+  "tips": [
+    "How do you create an ad and display it in your feed?",
+    "How do you run an auction?",
+    "How can you target ads to certain demographics?",
+    "How do you measure performance - clicks, views?"
+  ],
+  "resources": [
+    {
+      "title": "Overview video",
+      "url": "https://www.youtube.com/watch?v=Zcv_899yqhI&t=2s",
+      "kind": "video"
+    },
+    {
+      "title": "One solution",
+      "url": "https://dilipkumar.medium.com/facebook-instagram-ad-system-design-e828296ae84a",
+      "kind": "article"
+    }
+  ]
+}

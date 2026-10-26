@@ -1,0 +1,126 @@
+{
+  "id": "level-39",
+  "actId": "act-7",
+  "order": 39,
+  "title": "Find a Driver",
+  "difficulty": "hard",
+  "summary": "Match riders to nearby available drivers with a fast-moving spatial index and atomic reservations.",
+  "narrative": "A rider needs a nearby available driver within seconds. The Client here is both the driver app and the rider app. At peak, ~5 M online drivers send one location update every ~4 s, or ~1.25 M location writes/s; a large region set receives ~300 ride requests/s, with match p95 < 5 s. Unlike a static business directory, driver positions change continuously, so the location API needs a write-optimised in-memory Geospatial Index.\n\nRoute location updates and ride requests through a Load Balancer to redundant Web Servers. Partition driver positions by geohash/H3 cell and maintain cell → available driver ids; moving a driver removes its old cell membership and adds its new one. Hash-set membership edits are O(1) on average; Redis GEO can update a position with GEOADD, whose sorted-set update is O(log N). Avoid a frequently rebalanced quadtree at this write rate. Enqueue ride requests for redundant matching Workers, which search the pickup cell and neighbouring rings, filter by distance and rank candidates by ETA. Replicate the in-memory index, but treat its availability entries as candidates rather than authoritative reservations.\n\nBefore offering a ride, a Worker must atomically reserve the driver in Cache using SET driver:{id} <offer-token> NX EX 15, or an equivalent conditional AVAILABLE → OFFERED transition. Remove the reserved driver from the available index; racing matchers must still acquire the same authoritative reservation. Push the offer over the driver's open WebSocket. On accept, validate the offer token and expiry, then atomically commit one active trip per driver in SQL; stale or expired offers cannot create trips. On decline or timeout, release only the matching token and re-index the driver only if still available. Location updates must not re-advertise busy drivers. Optional ML predictions refine ETA and acceptance ranking; Monitoring tracks match failures and stale positions.",
+  "objectives": ["Moving spatial index", "Atomic driver reservation", "WebSocket ride offers", "Race-safe trip acceptance"],
+  "specs": {
+    "functional": [
+      "Accept driver locations every ~4 s and update available-driver cell membership in place",
+      "Enqueue ride requests; search neighbouring cells and rank nearby candidates by ETA",
+      "Reserve a driver atomically with a 15 s expiring offer token before removing it from availability",
+      "Push offers over the driver WebSocket; validate acceptance and persist trips in SQL",
+      "Retry another candidate on decline or timeout; reject stale acceptances and keep busy drivers out of the index"
+    ],
+    "nonFunctional": [
+      "Handle ~1.25 M location writes/s and ~300 ride requests/s at peak per large region set",
+      "Keep match p95 below 5 s and continue after a Web Server, Worker or index instance fails",
+      "Use one authoritative reservation owner per driver and SQL uniqueness or conditional state to prevent concurrent active trips"
+    ],
+    "constraints": [
+      "Clients must never access the Geospatial Index or reservation Cache directly",
+      "Use an in-memory write-optimised spatial index and connect matching Workers to reservation Cache",
+      "Index replication can lag; never infer exclusive driver ownership from an index removal alone",
+      "Release reservations by token and enforce expiry and driver status on acceptance and re-indexing"
+    ],
+    "budgetPerHr": 7.5,
+    "latencyTargetMs": 170,
+    "capacity": [
+      "~5 M online drivers × 1 update / 4 s ≈ 1.25 M location writes/s",
+      "~300 ride requests/s at peak per large region set; match p95 < 5 s",
+      "Driver offer reservation: 15 s; cell membership uses average O(1) hash-set edits or Redis GEO O(log N) updates"
+    ],
+    "tradeoff": "Fine cells reduce candidate scans but increase boundary searches and cell transitions. Replicated spatial data improves availability while stale entries require an authoritative atomic reservation and conditional trip acceptance; a short offer expiry recovers abandoned offers but requires rejecting late accepts.",
+    "bonus": "Connect matching Workers to an ML Model Server for predicted ETA and acceptance ranking, and add Monitoring for matching and index freshness."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route app requests through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance location and ride requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "geo-index", "label": "Update driver positions in place" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Enqueue ride requests" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "worker", "label": "Dispatch requests to matching Workers" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "worker", "toComponentId": "geo-index", "label": "Find nearby drivers and remove reserved candidates" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "worker", "toComponentId": "cache", "label": "Reserve drivers atomically with expiry" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "worker", "toComponentId": "sql-database", "label": "Persist accepted trips in SQL" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "client", "toComponentId": "websocket-server", "label": "Open the driver offer connection" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "worker", "toComponentId": "websocket-server", "label": "Push ride offers to drivers" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "worker", "toComponentId": "ml-model-server", "label": "Rank candidates by predicted ETA and acceptance", "bonus": true },
+    { "id": "m12", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for service health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "geo-index",
+      "message": "Apps query nearby drivers through the API, never directly from the Geospatial Index."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "cache",
+      "message": "Apps reserve drivers through matching Workers, never directly from Cache."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers to keep location and ride requests available."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "worker",
+      "message": "Run at least two matching Workers so one failure does not stop dispatch."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "geo-index",
+      "message": "Replicate the in-memory driver index across at least two instances."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "worker",
+      "companionComponentId": "cache",
+      "message": "Connect matching Workers to Cache for atomic expiring driver reservations."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "geo-index", "message-queue", "worker", "cache", "sql-database", "websocket-server", "ml-model-server", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → Geospatial Index for moving driver positions and → Message Queue for ride requests; keep both stores behind services.",
+    "Wire Message Queue → Worker, then Worker → Geospatial Index, → Cache and → SQL Database. Reserve before offering and validate the offer on acceptance. Add Client → WebSocket Server and Worker → WebSocket Server to push the offer.",
+    "Use two Web Servers, two matching Workers and two Geospatial Index instances. Each Web Server reaches both indexes and the queue; the queue feeds both Workers. Each Worker reaches both indexes, Cache, SQL and WebSocket Server. Add each Worker → ML Model Server and → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/find-a-rider-for-uber-or-uber-eats",
+  "tips": [
+    "Very similar to Proximity Service (Find Nearby Friends). This problem is about maintaining a large geospatial index.",
+    "How do you maintain a geospatial index of drivers?",
+    "In that index, how do you update the driver location quickly?",
+    "How do you remove the driver as soon as you match a rider? You don't want the driver to be matched at the same time.",
+    "How do you ensure efficient edits - when a driver location changes, your algorithm should update the index fast."
+  ],
+  "resources": [
+    {
+      "title": "Excellent article on geospatial algorithms",
+      "url": "https://blog.mapbox.com/a-dive-into-spatial-search-algorithms-ebd0c5e39d2a",
+      "kind": "article"
+    },
+    {
+      "title": "Good solution for Yelp, which applies here",
+      "url": "https://systemdesignschool.io/problems/yelp/solution",
+      "kind": "article"
+    },
+    {
+      "title": "Popular Video",
+      "url": "https://www.youtube.com/watch?v=M4lR_Va97cQ",
+      "kind": "video"
+    },
+    {
+      "title": "Mock Interview",
+      "url": "https://www.youtube.com/watch?v=atywHEArk1w",
+      "kind": "video"
+    }
+  ]
+}

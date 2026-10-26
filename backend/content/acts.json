@@ -34,5 +34,11 @@
     "order": 6,
     "title": "Live Counts & Presence",
     "description": "Counters, presence and live updates pushed to millions of screens at once."
+  },
+  {
+    "id": "act-7",
+    "order": 7,
+    "title": "Rides, Ranking & Experiments",
+    "description": "Location indexes, ETAs, dynamic prices, experiments and ad auctions driven by streams and models."
   }
 ]

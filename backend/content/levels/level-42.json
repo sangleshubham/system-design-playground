@@ -1,0 +1,119 @@
+{
+  "id": "level-42",
+  "actId": "act-7",
+  "order": 42,
+  "title": "A/B Testing Platform",
+  "difficulty": "hard",
+  "summary": "Deliver stable experiment treatments, collect exposure metrics and compute trustworthy results with a rapid kill switch.",
+  "narrative": "Product teams define experiments with variants, traffic splits, targeting, success metrics and guardrail metrics, then inspect statistically supported results and stop harmful tests quickly. Serve ~100 M DAU and ~500 concurrent experiments, with assignment evaluated on ~1 M requests/s. Collect ~20 B exposure and metric events/day, or ~230 K/s. Treatments are configuration rather than code forks: each variant contains a JSON payload of parameters and component keys the app renders; optional CDN delivery handles heavy treatment assets.\n\nA Load Balancer fronts redundant Web Servers for the app and experiment admin API. SQL stores experiments, variant payloads, allocation, targeting rules, metrics, state and result tables. A replicated Feature Flag Service distributes active configuration to SDKs. Web Servers fetch and cache that configuration rather than calling the service for every assignment. SDKs evaluate locally with bucket = hash(experimentId + userId) mod 100. Stable ids, hash rules and allocation boundaries keep a signed-in user's treatment stable across sessions and devices without storing assignments. Anonymous users use a persistent cookie id, which does not itself identify them across devices. Explicitly version allocation changes that could rebucket users. A flag flip stops a test as configuration propagates in seconds.\n\nClients report exposure only when a treatment is actually shown and attach experiment, variant, user and stable event ids to clicks and conversions. Web Servers append events to Message Queue; independent consumption feeds real-time Stream Processor guardrails and raw Data Warehouse storage. Check sample-ratio mismatch and error spikes; optional Notification Service alerts the owner on regressions. Web Servers register daily analyses with Task Scheduler, which launches Batch Processor jobs over warehouse events. Deduplicate event ids and join outcomes to valid exposures; use appropriate user-level analysis, t-test confidence intervals and CUPED variance reduction where applicable. Write per-variant results into SQL for the admin dashboard; never query the warehouse on an app or admin request.",
+  "objectives": ["Stable local assignment", "Configurable treatments", "Exposure & guardrail events", "Daily statistical analysis"],
+  "specs": {
+    "functional": [
+      "Store experiments, JSON variant configs, traffic allocation, targeting, metrics, state and results in SQL; let admins preview treatments before activation",
+      "Distribute flag configuration to SDKs for deterministic local hashing and stop tests by a flag flip",
+      "Record exposures, clicks and conversions with experiment and variant identities in the event pipeline",
+      "Stream sample-ratio and error guardrails while storing raw events in the warehouse",
+      "Schedule daily batch analysis with confidence intervals and applicable CUPED adjustment; serve results from SQL and report inconclusive outcomes when confidence is insufficient"
+    ],
+    "nonFunctional": [
+      "Support ~100 M DAU, ~500 concurrent experiments and ~1 M local assignment evaluations/s without per-assignment database reads",
+      "Collect ~20 B events/day ≈ 230 K/s and propagate test shutdown in seconds",
+      "Keep assignment consistent for stable user identity and allocation; survive a Web Server or Feature Flag Service instance failure"
+    ],
+    "constraints": [
+      "Clients must never access SQL directly; Web Servers must never write to or query Data Warehouse on the request path",
+      "Connect Task Scheduler to Batch Processor for daily analysis and persist dashboard results in SQL",
+      "Use stable hashing and explicit allocation versions; cookie ids persist anonymous assignments only where that cookie remains available",
+      "Give guardrail and warehouse consumers independent progress; deduplicate event ids and analyze outcomes against logged exposures"
+    ],
+    "budgetPerHr": 8.0,
+    "latencyTargetMs": 670,
+    "capacity": [
+      "~100 M DAU; ~500 concurrent experiments",
+      "~1 M assignment evaluations/s through local SDK hashing, without database reads",
+      "~20 B events / 86,400 s ≈ 231 K events/s, rounded to ~230 K/s; daily batch analysis",
+      "Flag changes propagate in seconds; results include per-variant confidence intervals"
+    ],
+    "tradeoff": "Local hashing avoids assignment storage and request-time dependencies but stable identities and allocation boundaries matter; changing splits can move users. Streaming detects guardrail regressions quickly while daily batch analysis improves statistical rigor at the cost of delayed results. Flag propagation takes seconds rather than being globally instantaneous.",
+    "bonus": "Connect Client → CDN for treatment assets and Stream Processor → Notification Service to alert experiment owners on guardrail regressions."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route app and admin traffic through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance app and experiment admin requests" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "feature-flag-service", "label": "Retrieve active variant configuration" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Store experiment definitions and results" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append exposure and metric events" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Watch real-time experiment guardrails" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "data-warehouse", "label": "Retain raw experiment events" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "task-scheduler", "label": "Schedule daily experiment analysis" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "task-scheduler", "toComponentId": "batch-processor", "label": "Launch daily batch analysis" },
+    { "id": "m10", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "data-warehouse", "label": "Analyze per-variant metrics and significance" },
+    { "id": "m11", "kind": "connect", "fromComponentId": "batch-processor", "toComponentId": "sql-database", "label": "Write dashboard results to SQL" },
+    { "id": "m12", "kind": "connect", "fromComponentId": "client", "toComponentId": "cdn", "label": "Fetch treatment assets from the CDN", "bonus": true },
+    { "id": "m13", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "notification-service", "label": "Alert experiment owners on guardrail regressions", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "client",
+      "toComponentId": "sql-database",
+      "message": "Clients access experiment definitions and results through the API, never directly from SQL."
+    },
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "data-warehouse",
+      "message": "Events go through the log; never write to or query the warehouse on the request path."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so app and experiment administration remain available."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "feature-flag-service",
+      "message": "Replicate the Feature Flag Service to keep SDK configuration distribution available for assignment."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "task-scheduler",
+      "companionComponentId": "batch-processor",
+      "message": "Connect Task Scheduler to Batch Processor to run daily statistical analysis."
+    }
+  ],
+  "recommendedComponentIds": ["client", "cdn", "load-balancer", "web-server", "feature-flag-service", "sql-database", "message-queue", "stream-processor", "data-warehouse", "task-scheduler", "batch-processor", "notification-service"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → SQL Database for experiment definitions and results and → Feature Flag Service for SDK configuration; assignment uses local hashing.",
+    "Connect Web Server → Message Queue, then Message Queue → Stream Processor and → Data Warehouse. Separately add Web Server → Task Scheduler → Batch Processor, then Batch Processor → Data Warehouse and → SQL Database for daily results.",
+    "Run two Web Servers and two Feature Flag Service instances. Each Web Server reaches both flag instances, SQL, the queue and scheduler. Keep both event branches and the batch-result path. Add Client → CDN for variant assets and Stream Processor → Notification Service for guardrail alerts."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/design-an-ab-testing-system-like-optimizely",
+  "tips": [
+    "How will you store and retrieve different treatment UI?",
+    "How will you measure the success metrics for each treatment?",
+    "How will you assign a treatment to a user and maintain it for that user across sessions?",
+    "How will the company admin see the treatments?",
+    "How will you store the information for the tests? Or, how will you structure the database?",
+    "How will you easily turn the test on and off?"
+  ],
+  "resources": [
+    {
+      "title": "Good design",
+      "url": "https://chuan-zhang.medium.com/building-a-trustworthy-a-b-testing-platform-practical-guide-and-an-architecture-demonstration-332446724ba0",
+      "kind": "article"
+    },
+    {
+      "title": "High level overview",
+      "url": "https://xhinliang.medium.com/how-to-design-an-a-b-test-system-1450b06933f",
+      "kind": "article"
+    },
+    {
+      "title": "Building a small homemade A/B test engine",
+      "url": "https://medium.com/studocu-techblog/recipe-for-implementing-a-homemade-a-b-testing-engine-2e95c97c8020",
+      "kind": "article"
+    }
+  ]
+}

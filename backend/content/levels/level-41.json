@@ -1,0 +1,108 @@
+{
+  "id": "level-41",
+  "actId": "act-7",
+  "order": 41,
+  "title": "Surge Pricing",
+  "difficulty": "expert",
+  "summary": "Precompute stable per-cell surge multipliers from demand and supply while honoring accepted fare quotes.",
+  "narrative": "Raise fares where rider demand outstrips available drivers to attract supply and ration rides, while keeping prices stable and honoring a fare the rider accepted. Divide cities into H3 hexagonal cells about 1–2 km across. Across ~500 K active cells, ingest ~1.25 M driver pings/s plus ~50 K quote events/s. Recompute each cell's multiplier every 60 s; the quote API serves ~50 K reads/s with p99 < 50 ms. Driver apps show a heatmap from the same per-cell multiplier map.\n\nClients send pings, fare quotes and ride requests through a Load Balancer to redundant Web Servers. Append supply and demand events to a Message Queue. Redundant Stream Processors count available drivers and demand signals over per-cell sliding windows, distinguishing repeated quotes from unique requests and expiring stale driver availability. An ML Model Server maps the demand/supply ratio, short-term demand forecast, events and weather to a multiplier. Define safe behavior for zero supply, smooth changes with EWMA, and apply hysteresis and caps to avoid oscillation. Store the versioned multiplier per cell in Cache with an expiry; when it expires, use a defined safe fallback rather than indefinitely serving stale surge.\n\nCompute surge away from the quote request. The Web Server reads the pickup cell's precomputed multiplier, returns the fare, and stores a locked quote in SQL with its price, multiplier version and ~2 min expiry. Accepting a still-valid quote conditionally associates that price with the trip; a later multiplier change must not reprice it, and an expired quote requires a fresh offer. Dispatch stays unchanged. For audit, analytics and regulators, each locked quote records the multiplier version it used, and the retained demand/supply event log plus the versioned model let every multiplier be reproduced. Optionally archive that log in a Data Warehouse for long-term pricing analysis, and monitor stale cells, demand/supply lag and price oscillation.",
+  "objectives": ["Demand/supply windows", "Smoothed dynamic prices", "Precomputed quote reads", "Locked quote acceptance"],
+  "specs": {
+    "functional": [
+      "Aggregate demand and available-driver supply in sliding windows per H3 cell",
+      "Compute multipliers every 60 s using ratio, forecast, events and weather; apply EWMA, hysteresis and caps",
+      "Write expiring versioned multipliers to Cache and serve quote reads and driver heatmaps from that map",
+      "Store locked quotes and trips in SQL; honor accepted prices for valid ~2 min quotes without changing dispatch",
+      "Record the multiplier version used by every locked quote and retain the demand/supply event log and model version so multiplier changes can be audited and reproduced for analytics and regulators"
+    ],
+    "nonFunctional": [
+      "Ingest ~1.25 M pings/s plus ~50 K quote events/s across ~500 K active cells",
+      "Serve ~50 K quote reads/s with p99 < 50 ms without synchronous model inference",
+      "Continue after a Web Server or Stream Processor failure; bound stale surge and price oscillation"
+    ],
+    "constraints": [
+      "Web Servers must never call the ML Model Server on the quote path; read precomputed Cache multipliers",
+      "All Web Server paths to Stream Processors must pass through Message Queue",
+      "Connect Stream Processors to Cache; define multiplier expiry, zero-supply handling and a safe fallback",
+      "Validate quote identity and expiry on acceptance and preserve its locked price in SQL"
+    ],
+    "budgetPerHr": 7.5,
+    "latencyTargetMs": 290,
+    "capacity": [
+      "~500 K active H3 cells, each about 1–2 km; multiplier refresh every 60 s",
+      "~1.25 M driver pings/s + ~50 K quote events/s ≈ 1.30 M input events/s",
+      "~50 K quote reads/s, p99 < 50 ms; locked quote validity ~2 min"
+    ],
+    "tradeoff": "Minute-scale precomputation keeps quote reads fast but lags sudden demand. Smaller cells improve local sensitivity while sparse samples increase noise; smoothing and hysteresis reduce flapping at the cost of slower response. Locked quotes preserve trust while temporarily diverging from the latest multiplier.",
+    "bonus": "Connect Message Queue → Data Warehouse for audit and pricing analytics, and add Monitoring for freshness and unstable multipliers."
+  },
+  "missions": [
+    { "id": "m1", "kind": "connect", "fromComponentId": "client", "toComponentId": "load-balancer", "label": "Route ride traffic through the Load Balancer" },
+    { "id": "m2", "kind": "connect", "fromComponentId": "load-balancer", "toComponentId": "web-server", "label": "Balance quotes and driver pings" },
+    { "id": "m3", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "message-queue", "label": "Append demand and supply events" },
+    { "id": "m4", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "stream-processor", "label": "Aggregate per-cell sliding windows" },
+    { "id": "m5", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "ml-model-server", "label": "Predict surge from demand and supply" },
+    { "id": "m6", "kind": "connect", "fromComponentId": "stream-processor", "toComponentId": "cache", "label": "Publish expiring cell multipliers" },
+    { "id": "m7", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "cache", "label": "Read precomputed multipliers for quotes" },
+    { "id": "m8", "kind": "connect", "fromComponentId": "web-server", "toComponentId": "sql-database", "label": "Persist locked quotes and trips" },
+    { "id": "m9", "kind": "connect", "fromComponentId": "message-queue", "toComponentId": "data-warehouse", "label": "Retain pricing events for audit and analysis", "bonus": true },
+    { "id": "m10", "kind": "add", "componentId": "monitoring", "label": "Add Monitoring for service health", "bonus": true }
+  ],
+  "topologyRules": [
+    {
+      "kind": "forbidden-edge",
+      "fromComponentId": "web-server",
+      "toComponentId": "ml-model-server",
+      "message": "Don't compute surge on the quote path — read the precomputed multiplier."
+    },
+    {
+      "kind": "required-between",
+      "viaComponentId": "message-queue",
+      "fromComponentId": "web-server",
+      "toComponentId": "stream-processor",
+      "message": "Buffer demand and supply events in Message Queue before per-cell processing."
+    }
+  ],
+  "resilienceRules": [
+    {
+      "kind": "no-spof",
+      "componentId": "web-server",
+      "message": "Run at least two Web Servers so quotes remain available after one failure."
+    },
+    {
+      "kind": "no-spof",
+      "componentId": "stream-processor",
+      "message": "Run at least two Stream Processors so multiplier updates survive an instance failure."
+    },
+    {
+      "kind": "requires-companion",
+      "componentId": "stream-processor",
+      "companionComponentId": "cache",
+      "message": "Connect Stream Processors to Cache to publish precomputed cell multipliers."
+    }
+  ],
+  "recommendedComponentIds": ["client", "load-balancer", "web-server", "message-queue", "stream-processor", "cache", "sql-database", "ml-model-server", "data-warehouse", "monitoring"],
+  "hints": [
+    "Start with Client → Load Balancer → Web Server. Connect Web Server → Cache for multiplier reads and → SQL Database for locked quotes; compute surge separately from these reads.",
+    "Wire Web Server → Message Queue → Stream Processor, then Stream Processor → ML Model Server and → Cache. Aggregate per-cell windows, smooth predictions and expire stale multipliers; keep model calls off the Web Server path.",
+    "Run two Web Servers and two Stream Processors. Each Web Server reaches Message Queue, Cache and SQL; the queue feeds both processors, each connected to the model server and Cache. Add Message Queue → Data Warehouse and each Web Server → Monitoring."
+  ],
+  "sourceUrl": "https://systemdesign.io/question/surge-pricing-system-uber",
+  "tips": [
+    "How do you decide when surge pricing is needed?",
+    "How do you calculate the pricing?",
+    "How do you integrate it into an existing ride sharing system?"
+  ],
+  "resources": [
+    {
+      "title": "Good overview",
+      "url": "https://docs.google.com/document/d/1uJpPuhO6vZK_VCxBYKbCJoQYrbFE9Ihrsfs919X8f40/edit?usp=sharing",
+      "kind": "article"
+    },
+    {
+      "title": "GPT Solution",
+      "url": "https://docs.google.com/document/d/1hfUmr8SpBMCkEMlOeXl6Y-H85PMzq-zd07Isb1ltWZE/edit?usp=sharing",
+      "kind": "article"
+    }
+  ]
+}
